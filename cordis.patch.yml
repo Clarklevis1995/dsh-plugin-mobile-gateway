@@ -1,0 +1,18 @@
+# dsh-plugin-mobile-gateway bundle patch.
+# Applied after dsh-base and dsh-web-app: inserts the persistent /ws/mobile
+# gateway row into the host plane (it consumes the host `webServer` service
+# and the host `session/event` feed, and publishes no service of its own).
+- insert:
+    - id: mobile-gateway
+      name: 'dsh-plugin-mobile-gateway'
+
+# The gateway's `search` query channel needs the full-text session index,
+# which dsh-web-app deliberately ships as `openAt: never` (search disabled).
+# This later layer opts the deployment into on-demand opening: the node:sqlite
+# import and the in-memory index stay deferred until the first search call,
+# so startup is unaffected. A patch replaces the row's whole config, so both
+# keys are restated here.
+- id: session-query-sqlite
+  config:
+    path: ':memory:'
+    openAt: first-search
