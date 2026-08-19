@@ -5,6 +5,14 @@
 - insert:
     - id: mobile-gateway
       name: 'dsh-plugin-mobile-gateway'
+      config:
+        # Secure by default: every mobile WebSocket must authenticate with a
+        # paired device credential. Pair/revoke APIs remain local-machine only.
+        gatewayEnabled: false
+        gatewayWaitTimeoutMs: 300000
+        requireAuth: true
+        adminLoopbackOnly: true
+        pairingTtlMs: 300000
 
 # The gateway's `search` query channel needs the full-text session index,
 # which dsh-web-app deliberately ships as `openAt: never` (search disabled).

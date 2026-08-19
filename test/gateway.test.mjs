@@ -1,11 +1,15 @@
+import { createRequire } from 'node:module'
+
+const require = createRequire(import.meta.url)
 const http = require('node:http')
-const plugin = require('/Users/lichaofan/DeepseekHarnessProject/dsh-plugin-mobile-gateway/lib/index.js')
+const plugin = (await import('../lib/index.mjs')).default
 
 const listeners = {}
 let disposer = null
 const server = http.createServer((req, res) => { res.writeHead(404); res.end() })
 const webServer = {
   port: 18086,
+  register() { return () => {} },
   registerUpgrade(route) { server.on('upgrade', (req, socket, head) => route.handler(req, socket, head)); return () => {} },
 }
 function fakeApi() {
@@ -81,7 +85,7 @@ ctx.typertGateway = {
     return { commandId: 'cmd-1', result: { kind: 'success', text: 'switched' } }
   },
 }
-plugin.apply(ctx)
+plugin.apply(ctx, { gatewayEnabled: true, requireAuth: false, deviceFile: '/tmp/dsh-mobile-gateway-dispatch-test-devices.json' })
 server.listen(webServer.port)
 
 const WebSocket = require('ws')

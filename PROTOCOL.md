@@ -1,8 +1,9 @@
 # dsh Mobile Gateway — WebSocket 协议参考
 
-移动端通过一个 WebSocket 连接与 dsh 通信：订阅 agent 实时输出、发送消息、查询会话/工作区/历史、调整会话配置。本协议由持久化插件 `dsh-plugin-mobile-gateway` 实现（v0.1.17）。
+移动端通过一个经过设备鉴权的 WebSocket 连接与 dsh 通信：订阅 agent 实时输出、发送消息、查询会话/工作区/历史、调整会话配置。本协议由持久化插件 `dsh-plugin-mobile-gateway` 实现（v0.3.0）。
 
-- **端点**：`ws://127.0.0.1:3080/ws/mobile`（与 dsh web GUI 同端口）
+- **本机端点**：`ws://127.0.0.1:3080/ws/mobile`（与 dsh web GUI 同端口）
+- **公网端点**：必须由 TLS 反向代理提供 `wss://<域名>/ws/mobile`
 - **帧格式**：全部为 JSON 文本帧（UTF-8）
 - **连接即推送**：连上后服务端立刻发送一条 `hello`，之后 agent 输出以 `event` 帧实时推送
 
@@ -31,6 +32,103 @@
 
 ### 会话 ID 获取
 `{"type":"sessions"}` 列表取 `sessionId`，或 `{"type":"message"}` 省略 sessionId 自动创建后从 `sent` 响应拿。
+
+### 设备配对与鉴权
+
+#### 网关与鉴权状态
+
+WebUI 中有两个互相独立的开关。它们是本机管理设置，iOS 客户端不应调用 `/mgw/*`：
+
+| 移动网关 | 设备鉴权 | iOS 连接结果 |
+|---|---|---|
+| 关闭 | 任意 | WebSocket Upgrade 返回 `503 Service Unavailable` |
+| 开启 | 开启（默认） | 必须使用一次性配对码或长期设备 token，否则返回 `401 Unauthorized` |
+| 开启 | 关闭（仅 Debug） | 允许无凭证连接，`hello.authenticated` 为 `false` |
+
+- 移动网关默认关闭。手动开启后，默认 5 分钟内没有客户端成功建立连接就自动关闭。
+- 关闭移动网关会关闭现有连接，WebSocket close code 为 `4004`。
+- 从 Debug 模式重新开启鉴权时，所有无凭证连接会被关闭，close code 为 `4003`。
+- Debug 鉴权开关只在当前 DSH 进程中生效；重启后恢复配置中的 `requireAuth: true`。
+
+#### 首次配对
+
+二维码与手动复制内容都严格使用**无 padding 的 Base64URL 字符串**。解码后的 UTF-8 内容是以下 JSON，而不是长期凭证：
+
+```json
+{
+  "version": 2,
+  "publicUrl": "wss://gateway.example.com/ws/mobile",
+  "pairingCode": "<一次性 256-bit 配对码>",
+  "expiresAt": 1787112000000
+}
+```
+
+编码方式（唯一受支持的配对载荷格式）：
+
+```js
+const pairingText = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url')
+```
+
+客户端必须先执行严格 Base64URL 解码（只允许 `A-Z a-z 0-9 - _`，不接受 `=` padding、原始 JSON 或普通 Base64），再解析 JSON 并检查 `version` 与 `expiresAt`。
+
+首次连接必须请求子协议 `dsh-mobile-v1, dsh-pair.<pairingCode>`，并携带 `X-DSH-Device-ID` 请求头；缺少稳定设备 ID 的配对请求会被拒绝，避免每次重连都创建新的可信设备。该值应为客户端在 Keychain 中持久保存的安装级随机 UUID，仅用于重新配对时复用可信设备记录，不能替代配对码或设备 token 完成鉴权。兼容实现也可把一次性配对码放在 `?pairingCode=`；但子协议不会进入常见的 URL access log，因此优先使用子协议。成功后服务端依次发送：
+
+```json
+{ "kind": "paired", "token": "<长期设备 token>",
+  "device": { "id": "...", "name": "iPhone", "createdAt": 1787111700000 } }
+{ "kind": "hello", "protocol": 2, "authenticated": true,
+  "device": { "id": "...", "name": "iPhone" }, "port": 3080, "clients": 1 }
+```
+
+`paired` 只发送一次。iOS 必须把 token 存入 Keychain，之后使用以下任一方式连接：
+
+- 推荐：HTTP 请求头 `Authorization: Bearer <token>`
+- WebSocket 子协议：`dsh-mobile-v1, dsh-auth.<token>`
+
+长期 token 默认禁止放在 URL query 中，避免被代理日志、浏览器历史和监控系统记录。缺少凭证、凭证无效、配对码过期或重复使用时，HTTP Upgrade 返回 `401 Unauthorized`。
+
+#### iOS 对接示例
+
+首次配对时，先对二维码/手动字符串执行 Base64URL 解码，再从 JSON 解析 `publicUrl`、`pairingCode` 和 `expiresAt`，并在过期前连接：
+
+```swift
+func connectForPairing(publicURL: URL, pairingCode: String) -> URLSessionWebSocketTask {
+    var request = URLRequest(url: publicURL)
+    request.setValue(stableInstallationUUID, forHTTPHeaderField: "X-DSH-Device-ID")
+    request.setValue(
+        "dsh-mobile-v1, dsh-pair.\(pairingCode)",
+        forHTTPHeaderField: "Sec-WebSocket-Protocol"
+    )
+    let task = URLSession.shared.webSocketTask(with: request)
+    task.resume()
+    return task
+}
+```
+
+成功后第一条业务帧为 `paired`。客户端必须立即将 `token` 写入 Keychain；该 token 不会再次下发。随后还会收到 `hello`。
+
+后续连接推荐使用 `Authorization`：
+
+```swift
+func connectAuthenticated(publicURL: URL, token: String) -> URLSessionWebSocketTask {
+    var request = URLRequest(url: publicURL)
+    request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+    request.setValue("dsh-mobile-v1", forHTTPHeaderField: "Sec-WebSocket-Protocol")
+    let task = URLSession.shared.webSocketTask(with: request)
+    task.resume()
+    return task
+}
+```
+
+客户端连接状态机建议如下：
+
+1. 收到 HTTP `503`：网关尚未开启，停止高频重连；等待用户在 WebUI 开启后再手动重试，或使用有上限的退避。
+2. 收到 HTTP `401`：token 缺失、错误或已被吊销；删除 Keychain 中的旧 token，进入重新配对流程。
+3. 收到 `paired`：保存 token，记录 device id，然后等待 `hello`。
+4. 收到 `hello.authenticated == true`：进入正常业务通信。
+5. Debug 模式收到 `hello.authenticated == false`：允许调试通信，但不得把该连接方式用于公网构建。
+6. 收到 close code `4003`：服务端已重新开启鉴权，使用 token 重连或重新配对。
+7. 收到 close code `4004`：移动网关已关闭，停止自动重连。
 
 ---
 
@@ -219,7 +317,8 @@
 
 | kind | 触发时机 |
 |---|---|
-| `hello` | 连接成功：`{ "kind":"hello", "protocol":1, "port":3080, "clients":1 }` |
+| `paired` | 首次配对成功；仅此一次返回长期设备 token |
+| `hello` | 连接成功：`{ "kind":"hello", "protocol":2, "authenticated":true, "port":3080, "clients":1 }` |
 | `event` | 任意会话的 agent 输出（见下） |
 | `pong` / `subscribed` / `sent` | 对应请求的回复 |
 
@@ -253,8 +352,11 @@
 
 ## 13. 安全注意
 
-- 当前 `/ws/mobile` **无认证**：任何能连到端口的人都能读会话、发消息、改配置（含全局默认值）
-- 仅限本机/受信局域网使用；**暴露公网前必须加 token 认证**
+- `/ws/mobile` 的移动网关默认关闭；本机 WebUI 手动开启后，若 5 分钟内没有设备成功连接会自动关闭
+- 网关开启后仍要求已配对设备凭证；不要把 `requireAuth` 设为 `false` 后暴露到网络
+- `/mgw/*` 是配对/吊销管理面，默认只允许本机访问；公网代理只应转发 `/ws/mobile`
+- DSH HTTP Server 本身没有 TLS、认证或 Origin policy；公网必须使用 TLS 反向代理和 `wss://`
+- 长期 token 只保存在 iOS Keychain；服务端磁盘仅保存摘要
 - `set-default` / `save-default-model` 是全局写操作，客户端 UI 应加确认
 
 ---
@@ -276,7 +378,8 @@
 | v0.1.15 | save-default-model |
 | v0.1.16 | fork（新对话分支） |
 | v0.1.17 | models 支持无 sessionId 全局目录；新增 providers |
+| v0.3.0 | 默认设备鉴权；一次性二维码配对；摘要化凭证存储；WebUI 设备面板；在线状态和即时吊销 |
 
 ---
 
-*协议与插件源码同源维护：`dsh-plugin-mobile-gateway/lib/index.js` 顶部注释即协议摘要。*
+*协议与插件源码同源维护：`dsh-plugin-mobile-gateway/lib/index.mjs` 顶部注释即协议摘要。*

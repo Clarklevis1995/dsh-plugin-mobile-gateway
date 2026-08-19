@@ -1,19 +1,34 @@
 {
   "name": "dsh-plugin-mobile-gateway",
-  "version": "0.1.17",
+  "version": "0.3.0",
   "description": "Persistent WebSocket gateway for dsh: exposes /ws/mobile on the web server and forwards agent session output to connected mobile clients",
-  "main": "lib/index.js",
+  "main": "lib/index.mjs",
   "files": [
     "lib",
     "cordis.patch.yml",
     "PROTOCOL.md"
   ],
   "dependencies": {
-    "ws": "^8.18.0"
+    "@deepseek-ai/schemastery": "^3.18.1",
+    "ws": "^8.18.0",
+    "qrcode": "^1.5.4"
+  },
+  "exports": {
+    ".": "./lib/index.mjs",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
   },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-sidebar"
+      ]
     }
   },
   "license": "MIT"
