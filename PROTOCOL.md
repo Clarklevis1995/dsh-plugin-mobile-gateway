@@ -1,8 +1,9 @@
 # dsh Mobile Gateway — WebSocket 协议参考
 
-移动端通过一个经过设备鉴权的 WebSocket 连接与 dsh 通信：订阅 agent 实时输出、发送消息、查询会话/工作区/历史、调整会话配置。本协议由持久化插件 `dsh-plugin-mobile-gateway` 实现（v0.3.0）。
+移动端通过一个经过设备鉴权的 WebSocket 连接与 dsh 通信：订阅 agent 实时输出、发送消息、查询会话/工作区/历史、调整会话配置。本协议由持久化插件 `dsh-plugin-mobile-gateway` 实现（v0.4.2）。
 
 - **本机端点**：`ws://127.0.0.1:3080/ws/mobile`（与 dsh web GUI 同端口）
+- **局域网端点**：`ws://<电脑的私有局域网 IP>:3081/ws/mobile`（插件独立监听，只提供经过鉴权的 WebSocket）
 - **公网端点**：必须由 TLS 反向代理提供 `wss://<域名>/ws/mobile`
 - **帧格式**：全部为 JSON 文本帧（UTF-8）
 - **连接即推送**：连上后服务端立刻发送一条 `hello`，之后 agent 输出以 `event` 帧实时推送
@@ -43,12 +44,12 @@ WebUI 中有两个互相独立的开关。它们是本机管理设置，iOS 客�
 |---|---|---|
 | 关闭 | 任意 | WebSocket Upgrade 返回 `503 Service Unavailable` |
 | 开启 | 开启（默认） | 必须使用一次性配对码或长期设备 token，否则返回 `401 Unauthorized` |
-| 开启 | 关闭（仅 Debug） | 允许无凭证连接，`hello.authenticated` 为 `false` |
+| 开启 | 关闭（仅 Debug） | 仅 DSH 本机监听允许无凭证连接，`hello.authenticated` 为 `false`；独立局域网监听仍返回 `401` |
 
 - 移动网关默认关闭。手动开启后，默认 5 分钟内没有客户端成功建立连接就自动关闭。
 - 关闭移动网关会关闭现有连接，WebSocket close code 为 `4004`。
 - 从 Debug 模式重新开启鉴权时，所有无凭证连接会被关闭，close code 为 `4003`。
-- Debug 鉴权开关只在当前 DSH 进程中生效；重启后恢复配置中的 `requireAuth: true`。
+- Debug 鉴权开关只影响 DSH 自带的本机监听，并且只在当前 DSH 进程中生效；独立局域网监听始终强制设备鉴权。
 
 #### 首次配对
 

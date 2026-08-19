@@ -13,6 +13,12 @@
         requireAuth: true
         adminLoopbackOnly: true
         pairingTtlMs: 300000
+        # DSH WebUI remains loopback-only on 3080. The plugin owns this
+        # authenticated, WebSocket-only LAN listener for phones on the same
+        # private network.
+        lanEnabled: true
+        lanHost: 0.0.0.0
+        lanPort: 3081
         # Written automatically by `sudo npx dsh-plugin-mobile-gateway setup`.
         publicUrlFile: /etc/dsh-mobile-gateway/public-url
 

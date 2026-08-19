@@ -24,7 +24,7 @@ dsh plugin --profile web add dsh-plugin-mobile-gateway
 如果希望固定版本，可以在包名后指定版本号：
 
 ```bash
-dsh plugin --profile web add dsh-plugin-mobile-gateway@0.4.1
+dsh plugin --profile web add dsh-plugin-mobile-gateway@0.4.2
 ```
 
 也可以不经过 npm，直接安装 GitHub 版本：
@@ -45,7 +45,19 @@ dsh --profile web --dump-config | grep -A3 mobile-gateway
 
 启动 WebUI 后，左侧边栏底部应出现“移动设备”入口。
 
-### 3. 一条命令配置公网 IP（推荐，无需域名）
+### 3. 局域网直接连接（无需域名、证书或反向代理）
+
+插件安装并重启 `dsh web` 后，会额外创建一个仅用于移动端的局域网监听：
+
+```text
+ws://<运行 DSH 的电脑局域网 IP>:3081/ws/mobile
+```
+
+打开 WebUI 的“移动设备”面板时，插件会自动检测电脑的私有 IPv4，并优先把可用地址填入“WebSocket 地址”。开启移动网关、生成二维码并用 iOS 客户端扫码即可。电脑和手机需要位于可互访的同一局域网；如果系统防火墙询问是否允许 Node 接收入站连接，请允许私有网络访问 TCP `3081`。
+
+该端口只接受来自本机或私有网络地址的 `/ws/mobile` WebSocket Upgrade，不提供 WebUI，也不暴露 `/mgw/*` 管理接口。局域网监听始终要求设备配对鉴权，WebUI 中的 Debug 鉴权开关不会关闭它的鉴权。
+
+### 4. 一条命令配置公网 IP（推荐，无需域名）
 
 如果 Harness 部署在带固定公网 IPv4 的腾讯云 Ubuntu/Debian 服务器上，先在腾讯云安全组中放行入站 TCP `80` 和 `443`，然后在服务器执行：
 
@@ -90,7 +102,7 @@ sudo npx --yes dsh-plugin-mobile-gateway remove
 
 1. 开启“允许移动设备连接”。
 2. 保持“设备鉴权”开启。
-3. 在“公网 WebSocket 地址”中填写手机可以访问的地址。
+3. 在“WebSocket 地址”中填写手机可以访问的地址。
 
 本机浏览器调试可以使用：
 
@@ -98,15 +110,15 @@ sudo npx --yes dsh-plugin-mobile-gateway remove
 ws://127.0.0.1:3080/ws/mobile
 ```
 
-真机不能使用 `127.0.0.1`，因为它在手机上指向手机自身。局域网或公网真机连接应通过 TLS 反向代理提供：
+真机不能使用 `127.0.0.1`，因为它在手机上指向手机自身。同一私有局域网可使用插件自动提供的 `ws://局域网IP:3081/ws/mobile`；公网连接则应通过 TLS 反向代理提供：
 
 ```text
 wss://gateway.example.com/ws/mobile
 ```
 
-非 localhost 的配对地址会强制要求 `wss://`，以免一次性配对信息和长期连接暴露在明文网络中。
+只有 localhost、`.local` 主机名及 RFC 1918/链路本地私有地址允许使用 `ws://`。其他地址会强制要求 `wss://`，以免一次性配对信息和长期连接暴露在公网明文网络中。
 
-### 4. 配对 iOS 客户端
+### 5. 配对 iOS 客户端
 
 1. 在 WebUI 中填写设备名称，例如 `iPhone`。
 2. 点击“生成配对二维码”。
@@ -196,6 +208,10 @@ TLS 证书、域名、防火墙、访问日志保护和代理层速率限制由�
     gatewayWaitTimeoutMs: 300000
     requireAuth: true
     adminLoopbackOnly: true
+    lanEnabled: true
+    lanHost: 0.0.0.0
+    lanPort: 3081
+    lanAdvertiseHost: ''
     publicUrl: wss://gateway.example.com/ws/mobile
     publicUrlFile: /etc/dsh-mobile-gateway/public-url
     pairingTtlMs: 300000
@@ -211,7 +227,8 @@ TLS 证书、域名、防火墙、访问日志保护和代理层速率限制由�
 | WebUI 没有“移动设备”入口 | 确认使用 `--profile web` 安装；执行 `--dump-config` 检查组合树，然后完整重启 `dsh web` |
 | iOS 连接提示 `503` | 移动网关尚未开启，回到 WebUI 开启“允许移动设备连接” |
 | iOS 连接提示 `401` | 配对码过期、长期凭证无效或设备已被吊销；删除客户端旧凭证后重新配对 |
-| 真机无法连接 `127.0.0.1` | `127.0.0.1` 在手机上不是电脑；配置手机可访问的 `wss://` 地址 |
+| 真机无法连接 `127.0.0.1` | `127.0.0.1` 在手机上不是电脑；局域网使用面板自动显示的 `ws://私有IP:3081/ws/mobile`，公网使用 `wss://` 地址 |
+| 同一 Wi-Fi 仍无法连接局域网地址 | 确认手机与电脑所在网络允许设备互访，并放行电脑入站 TCP 3081；访客 Wi-Fi 通常会启用客户端隔离 |
 | 一键配置无法识别公网 IP | 确认命令运行在腾讯云 CVM 内，或通过 `--ip <公网 IPv4>` 显式指定 |
 | Certbot 申请或续期失败 | 确认腾讯云安全组和服务器防火墙都允许入站 TCP 80/443，并确认公网 IP 没有变化 |
 | 想检查自动续期 | 执行 `sudo systemctl status dsh-mobile-gateway-cert-renew.timer` 和 `sudo npx --yes dsh-plugin-mobile-gateway status` |
@@ -247,6 +264,9 @@ NODE_PATH=/path/to/dsh/node_modules node test/gateway.test.mjs
 
 # 公网 IP 安装器的参数、Nginx 隔离与续期配置
 node test/setup-ip.test.mjs
+
+# 独立局域网监听、强制鉴权与管理接口隔离
+node test/lan.test.mjs
 ```
 
 版本历史与全部 WebSocket 消息类型见 [`PROTOCOL.md`](PROTOCOL.md)。
