@@ -1,8 +1,14 @@
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { spawnSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 
 import {
   assertPublicIpv4,
   certName,
+  isMainModule,
   nginxHttpConfig,
   nginxTlsConfig,
   parseArgs,
@@ -42,5 +48,15 @@ assert.doesNotMatch(tlsConfig, /location \/mgw/)
 assert.match(renewalService(), /certbot renew --quiet/)
 assert.match(renewalService(), /systemctl reload nginx/)
 assert.match(renewalTimer(), /OnCalendar=\*-\*-\* 00,12:00:00/)
+
+const binPath = fileURLToPath(new URL('../bin/setup-ip.mjs', import.meta.url))
+const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-mobile-gateway-bin-'))
+const linkedBin = path.join(temporaryDirectory, 'dsh-plugin-mobile-gateway')
+fs.symlinkSync(binPath, linkedBin)
+assert.equal(isMainModule(linkedBin), true)
+const linkedInvocation = spawnSync(process.execPath, [linkedBin, '--help'], { encoding: 'utf8' })
+assert.equal(linkedInvocation.status, 0, linkedInvocation.stderr)
+assert.match(linkedInvocation.stdout, /dsh-plugin-mobile-gateway setup/)
+fs.rmSync(temporaryDirectory, { recursive: true })
 
 console.log('public IP setup tests passed')

@@ -24,7 +24,7 @@ dsh plugin --profile web add dsh-plugin-mobile-gateway
 如果希望固定版本，可以在包名后指定版本号：
 
 ```bash
-dsh plugin --profile web add dsh-plugin-mobile-gateway@0.4.0
+dsh plugin --profile web add dsh-plugin-mobile-gateway@0.4.1
 ```
 
 也可以不经过 npm，直接安装 GitHub 版本：

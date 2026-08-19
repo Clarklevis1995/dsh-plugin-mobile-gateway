@@ -7,7 +7,7 @@ import path from 'node:path'
 import process from 'node:process'
 import readline from 'node:readline/promises'
 import { execFileSync } from 'node:child_process'
-import { pathToFileURL } from 'node:url'
+import { fileURLToPath } from 'node:url'
 
 const MARKER = '# Managed by dsh-plugin-mobile-gateway'
 const CONFIG_DIR = '/etc/dsh-mobile-gateway'
@@ -314,7 +314,18 @@ export {
   renewalTimer,
 }
 
-if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
+function isMainModule(argvEntry) {
+  if (!argvEntry) return false
+  try {
+    return fs.realpathSync(argvEntry) === fs.realpathSync(fileURLToPath(import.meta.url))
+  } catch {
+    return false
+  }
+}
+
+export { isMainModule }
+
+if (isMainModule(process.argv[1])) {
   try {
     const options = parseArgs(process.argv.slice(2))
     if (options.command === 'help') printHelp()
