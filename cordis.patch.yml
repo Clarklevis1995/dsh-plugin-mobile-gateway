@@ -13,6 +13,8 @@
         requireAuth: true
         adminLoopbackOnly: true
         pairingTtlMs: 300000
+        # Written automatically by `sudo npx dsh-plugin-mobile-gateway setup`.
+        publicUrlFile: /etc/dsh-mobile-gateway/public-url
 
 # The gateway's `search` query channel needs the full-text session index,
 # which dsh-web-app deliberately ships as `openAt: never` (search disabled).

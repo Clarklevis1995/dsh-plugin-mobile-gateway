@@ -37,6 +37,8 @@ function expectRejected(url, options = {}) {
 ;(async () => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-mobile-auth-'))
   const registryFile = path.join(temp, 'devices.json')
+  const publicUrlFile = path.join(temp, 'public-url')
+  fs.writeFileSync(publicUrlFile, '# Managed by test\nwss://203.0.113.10/ws/mobile\n')
 
   // Registry contract: pairing is single-use and neither the pairing code nor
   // the long-lived token is persisted.
@@ -102,12 +104,16 @@ function expectRejected(url, options = {}) {
     adminLoopbackOnly: true,
     pairingTtlMs: 60_000,
     deviceFile: path.join(temp, 'integration-devices.json'),
+    publicUrlFile,
   })
   server.listen(0, '127.0.0.1')
   await once(server, 'listening')
   webServer.port = server.address().port
   const base = `http://127.0.0.1:${webServer.port}`
   const wsUrl = `ws://127.0.0.1:${webServer.port}/ws/mobile`
+
+  const initialStatus = await (await fetch(`${base}/mgw/status`)).json()
+  assert.equal(initialStatus.publicUrl, 'wss://203.0.113.10/ws/mobile')
 
   assert.equal(await expectRejected(wsUrl), 503)
 

@@ -1,9 +1,10 @@
 {
   "name": "dsh-plugin-mobile-gateway",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Persistent WebSocket gateway for dsh: exposes /ws/mobile on the web server and forwards agent session output to connected mobile clients",
   "main": "lib/index.mjs",
   "files": [
+    "bin",
     "lib",
     "docs",
     "cordis.patch.yml",
@@ -21,6 +22,10 @@
     "@deepseek-ai/schemastery": "^3.18.1",
     "ws": "^8.18.0",
     "qrcode": "^1.5.4"
+  },
+  "bin": "bin/setup-ip.mjs",
+  "scripts": {
+    "test": "node test/setup-ip.test.mjs && node test/gateway.test.mjs && node test/auth.test.mjs"
   },
   "exports": {
     ".": "./lib/index.mjs",
