@@ -5,9 +5,18 @@
   "main": "lib/index.mjs",
   "files": [
     "lib",
+    "docs",
     "cordis.patch.yml",
     "PROTOCOL.md"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Clarklevis1995/dsh-plugin-mobile-gateway.git"
+  },
+  "homepage": "https://github.com/Clarklevis1995/dsh-plugin-mobile-gateway#readme",
+  "bugs": {
+    "url": "https://github.com/Clarklevis1995/dsh-plugin-mobile-gateway/issues"
+  },
   "dependencies": {
     "@deepseek-ai/schemastery": "^3.18.1",
     "ws": "^8.18.0",

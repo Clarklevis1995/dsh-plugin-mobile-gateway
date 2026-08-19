@@ -16,15 +16,21 @@
 确保本机已经安装并能正常运行 DeepSeek Harness，然后执行：
 
 ```bash
-dsh plugin --profile web add github:Clarklevis1995/dsh-plugin-mobile-gateway
+dsh plugin --profile web add dsh-plugin-mobile-gateway
 ```
 
-这条命令会直接从 GitHub 获取插件、安装依赖，并将插件加入 `web` profile 的 bundle 列表。用户不需要 clone 仓库，也不需要运行 `pnpm install`。
+这条命令会直接从 npm 获取插件、安装依赖，并将插件加入 `web` profile 的 bundle 列表。用户不需要 clone 仓库，也不需要运行 `pnpm install`。
 
-如果希望固定到特定版本或提交，避免后续安装结果变化，可以在地址后追加 Git tag 或 commit：
+如果希望固定版本，可以在包名后指定版本号：
 
 ```bash
-dsh plugin --profile web add github:Clarklevis1995/dsh-plugin-mobile-gateway#<tag-or-commit>
+dsh plugin --profile web add dsh-plugin-mobile-gateway@0.3.0
+```
+
+也可以不经过 npm，直接安装 GitHub 版本：
+
+```bash
+dsh plugin --profile web add github:Clarklevis1995/dsh-plugin-mobile-gateway
 ```
 
 ### 2. 重启 Harness WebUI
@@ -105,11 +111,11 @@ wss://gateway.example.com/ws/mobile
 
 ## 更新插件（无需源码）
 
-GitHub 安装会把插件复制到 profile 中，不会自动跟随仓库更新。更新时重新安装并重启 WebUI：
+插件会被安装到 profile 中，不会自动更新。升级时重新安装最新 npm 版本并重启 WebUI：
 
 ```bash
 dsh plugin --profile web remove dsh-plugin-mobile-gateway
-dsh plugin --profile web add github:Clarklevis1995/dsh-plugin-mobile-gateway
+dsh plugin --profile web add dsh-plugin-mobile-gateway
 ```
 
 然后停止并重新启动 `dsh web`。
