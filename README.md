@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/whale-girl-ios-app-promo-16x9.png" alt="鲸鱼娘展示 DeepSeek Harness Mobile 与移动网关" width="100%">
+</p>
+
 # dsh-plugin-mobile-gateway
 
 为 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 提供经过设备鉴权的持久化 WebSocket 网关，让 iOS 等移动客户端能够查看工作区和历史会话、接收 Agent 实时输出、发送任务，以及调整会话模型与权限。
