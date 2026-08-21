@@ -1,6 +1,6 @@
 # dsh Mobile Gateway — WebSocket 协议参考
 
-移动端通过一个经过设备鉴权的 WebSocket 连接与 dsh 通信：订阅 agent 实时输出、发送消息、查询会话/工作区/历史、调整会话配置。本协议由持久化插件 `dsh-plugin-mobile-gateway` 实现（v0.4.2）。
+移动端通过一个经过设备鉴权的 WebSocket 连接与 dsh 通信：订阅 agent 实时输出、发送消息、处理 Human-in-the-loop 提问、查询会话/工作区/历史、调整会话配置。本协议由持久化插件 `dsh-plugin-mobile-gateway` 实现（v0.5.0）。
 
 - **本机端点**：`ws://127.0.0.1:3080/ws/mobile`（与 dsh web GUI 同端口）
 - **局域网端点**：`ws://<电脑的私有局域网 IP>:3081/ws/mobile`（插件独立监听，只提供经过鉴权的 WebSocket）
@@ -151,7 +151,111 @@ func connectAuthenticated(publicURL: URL, token: String) -> URLSessionWebSocketT
 
 ---
 
-## 3. 消息（手机 → agent）
+## 3. Human-in-the-loop 提问与回答
+
+Agent 调用 DSH 的 `ask_user_question` 工具时，插件通过 API Gateway 的 `events.mux()` 收到临时的待回答请求，并推送给移动端。该请求不属于持久化的 `session/event`；回答必须使用本节协议，不能作为普通 `message` 发送。
+
+### `question-requested` — 服务端推送问题
+
+```json
+{
+  "kind": "question-requested",
+  "rpcId": "5ce4f5d1-...",
+  "sessionId": "session-abc",
+  "questions": [
+    {
+      "id": "research-direction",
+      "header": "研究方向",
+      "question": "你想深入研究哪个方向？",
+      "detail": "请选择最感兴趣的方向",
+      "options": [
+        { "label": "核心架构", "description": "DSH CLI、profile、bundle 与 Cordis" },
+        { "label": "移动网关", "description": "研究 iOS 与 WebSocket 插件" }
+      ],
+      "multiSelect": false
+    }
+  ]
+}
+```
+
+- `rpcId`：API Gateway 为这一整批问题生成的稳定 ID。回答或取消时必须原样返回，客户端不得自行生成。
+- `questions`：一次工具调用中的完整问题批次；可能包含多题。
+- `id`：问题 ID，必须在对应答案中原样返回。
+- `header` / `detail`：可选展示信息。
+- `options`：可选列表；每项包含 `label` 和可选 `description`。
+- `multiSelect`：`true` 允许多选，缺省或 `false` 为单选。
+- `intent`：可选展示意图。目前可能为 `{ "kind":"plan-review", "approve":"批准选项标签" }`；未知 intent 应退化为普通选项列表。
+- `replay: true`：可选。表示这是移动端连接后重放的仍待回答问题。iOS 必须按 `rpcId` 去重。
+
+### `question-answer` — 移动端提交整批答案
+
+```json
+{
+  "type": "question-answer",
+  "rpcId": "5ce4f5d1-...",
+  "sessionId": "session-abc",
+  "answers": [
+    {
+      "id": "research-direction",
+      "selected": ["移动网关"]
+    }
+  ]
+}
+```
+
+自由输入使用 `custom`。单选题使用 `custom` 时 `selected` 必须为空；多选题可以同时携带两者：
+
+```json
+{
+  "id": "research-direction",
+  "selected": [],
+  "custom": "我想研究 API Gateway 的安全边界"
+}
+```
+
+提交规则由 API Gateway 严格校验：
+
+- 必须一次提交这一批中的全部问题，`answers` 数量、顺序和 `id` 必须与 `questions` 一致。
+- `selected` 中的值必须与原始 `options[].label` 完全一致，且不能重复。
+- 单选题最多选择一项；单选题的 `custom` 与 `selected` 互斥。
+- `custom` 如果存在，去除首尾空白后不能是空字符串。
+
+插件立即返回交付回执：
+
+```json
+{ "kind":"question-response", "rpcId":"5ce4f5d1-...", "sessionId":"session-abc",
+  "action":"answer", "accepted":true }
+```
+
+如果 WebUI 或另一台移动设备已经先回答：
+
+```json
+{ "kind":"question-response", "rpcId":"5ce4f5d1-...", "sessionId":"session-abc",
+  "action":"answer", "accepted":false, "reason":"not-pending" }
+```
+
+答案结构不合法时 `reason` 为 `bad-response`。这两种情况均不能重发为普通聊天消息。
+
+### `question-cancel` — 跳过/取消整批问题
+
+```json
+{ "type":"question-cancel", "rpcId":"5ce4f5d1-...", "sessionId":"session-abc" }
+```
+
+回执仍为 `question-response`，其中 `action` 为 `cancel`。取消会让等待中的 `ask_user_question` 以 `ASK_CANCELLED` 结束，iOS 应在用户确认后再执行。
+
+### `question-resolved` — 服务端广播最终状态
+
+```json
+{ "kind":"question-resolved", "rpcId":"5ce4f5d1-...", "sessionId":"session-abc",
+  "outcome":"answered" }
+```
+
+`outcome` 为 `answered` 或 `cancelled`。WebUI、iOS 或其他客户端中的第一个合法响应获胜；所有移动连接都会收到最终状态并应关闭对应选择界面。移动端断线重连后，API Gateway 会重放仍待回答的问题；DSH 进程重启则会取消这些仅存在于运行时的问题。
+
+---
+
+## 4. 消息（手机 → agent）
 
 ### `message` — 发送消息（会话不存在则创建）
 ```json
@@ -169,7 +273,7 @@ func connectAuthenticated(publicURL: URL, token: String) -> URLSessionWebSocketT
 
 ---
 
-## 4. 会话与历史查询
+## 5. 会话与历史查询
 
 | type | 参数 | 说明 |
 |---|---|---|
@@ -208,7 +312,7 @@ func connectAuthenticated(publicURL: URL, token: String) -> URLSessionWebSocketT
 
 ---
 
-## 5. 工作区与目录
+## 6. 工作区与目录
 
 | type | 参数 | 说明 |
 |---|---|---|
@@ -224,7 +328,7 @@ func connectAuthenticated(publicURL: URL, token: String) -> URLSessionWebSocketT
 
 ---
 
-## 6. 模型与思考等级
+## 7. 模型与思考等级
 
 | type | 参数 | 说明 |
 |---|---|---|
@@ -256,7 +360,7 @@ func connectAuthenticated(publicURL: URL, token: String) -> URLSessionWebSocketT
 
 ---
 
-## 7. 权限控制
+## 8. 权限控制
 
 | type | 参数 | 说明 |
 |---|---|---|
@@ -271,7 +375,7 @@ func connectAuthenticated(publicURL: URL, token: String) -> URLSessionWebSocketT
 
 ---
 
-## 8. 新会话默认配置
+## 9. 新会话默认配置
 
 | type | 参数 | 说明 |
 |---|---|---|
@@ -289,7 +393,7 @@ func connectAuthenticated(publicURL: URL, token: String) -> URLSessionWebSocketT
 
 ---
 
-## 9. 分支（fork）
+## 10. 分支（fork）
 
 ```json
 { "type": "fork", "sessionId": "session-abc", "atSeq": 42 }
@@ -300,7 +404,7 @@ func connectAuthenticated(publicURL: URL, token: String) -> URLSessionWebSocketT
 
 ---
 
-## 10. 宿主信息
+## 11. 宿主信息
 
 | type | 返回 |
 |---|---|
@@ -314,13 +418,14 @@ func connectAuthenticated(publicURL: URL, token: String) -> URLSessionWebSocketT
 
 ---
 
-## 11. 服务端主动推送
+## 12. 服务端主动推送
 
 | kind | 触发时机 |
 |---|---|
 | `paired` | 首次配对成功；仅此一次返回长期设备 token |
 | `hello` | 连接成功：`{ "kind":"hello", "protocol":2, "authenticated":true, "port":3080, "clients":1 }` |
 | `event` | 任意会话的 agent 输出（见下） |
+| `question-requested` / `question-resolved` | Human-in-the-loop 问题请求与最终状态 |
 | `pong` / `subscribed` / `sent` | 对应请求的回复 |
 
 ### `event` 帧（agent 实时输出）
@@ -338,7 +443,7 @@ func connectAuthenticated(publicURL: URL, token: String) -> URLSessionWebSocketT
 
 ---
 
-## 12. 端到端示例（Postman）
+## 13. 端到端示例（Postman）
 
 1. Connect → 收到 `hello`
 2. `{"type":"sessions"}` → 挑 `sessionId`（或直接下一步自动建）
@@ -351,7 +456,7 @@ func connectAuthenticated(publicURL: URL, token: String) -> URLSessionWebSocketT
 
 ---
 
-## 13. 安全注意
+## 14. 安全注意
 
 - `/ws/mobile` 的移动网关默认关闭；本机 WebUI 手动开启后，若 5 分钟内没有设备成功连接会自动关闭
 - 网关开启后仍要求已配对设备凭证；不要把 `requireAuth` 设为 `false` 后暴露到网络
@@ -359,10 +464,11 @@ func connectAuthenticated(publicURL: URL, token: String) -> URLSessionWebSocketT
 - DSH HTTP Server 本身没有 TLS、认证或 Origin policy；公网必须使用 TLS 反向代理和 `wss://`
 - 长期 token 只保存在 iOS Keychain；服务端磁盘仅保存摘要
 - `set-default` / `save-default-model` 是全局写操作，客户端 UI 应加确认
+- `question-answer` / `question-cancel` 会直接恢复或终止等待中的 Agent 工具调用；只允许经过鉴权的可信设备提交，并按 `rpcId` 防止重复操作
 
 ---
 
-## 14. 版本历史（插件）
+## 15. 版本历史（插件）
 
 | 版本 | 新增 |
 |---|---|
@@ -380,6 +486,7 @@ func connectAuthenticated(publicURL: URL, token: String) -> URLSessionWebSocketT
 | v0.1.16 | fork（新对话分支） |
 | v0.1.17 | models 支持无 sessionId 全局目录；新增 providers |
 | v0.3.0 | 默认设备鉴权；一次性二维码配对；摘要化凭证存储；WebUI 设备面板；在线状态和即时吊销 |
+| v0.5.0 | Human-in-the-loop：转发 API Gateway question 请求、整批回答/取消、重连重放与多端状态收敛 |
 
 ---
 

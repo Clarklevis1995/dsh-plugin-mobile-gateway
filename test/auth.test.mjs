@@ -113,6 +113,7 @@ function expectRejected(url, options = {}) {
   const wsUrl = `ws://127.0.0.1:${webServer.port}/ws/mobile`
 
   const initialStatus = await (await fetch(`${base}/mgw/status`)).json()
+  assert.equal(initialStatus.version, JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version)
   assert.equal(initialStatus.publicUrl, 'wss://203.0.113.10/ws/mobile')
 
   assert.equal(await expectRejected(wsUrl), 503)

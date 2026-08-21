@@ -4,7 +4,7 @@
 
 # dsh-plugin-mobile-gateway
 
-为 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 提供经过设备鉴权的持久化 WebSocket 网关，让 iOS 等移动客户端能够查看工作区和历史会话、接收 Agent 实时输出、发送任务，以及调整会话模型与权限。
+为 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 提供经过设备鉴权的持久化 WebSocket 网关，让 iOS 等移动客户端能够查看工作区和历史会话、接收 Agent 实时输出、处理 Human-in-the-loop 选择、发送任务，以及调整会话模型与权限。
 
 ![DeepSeek Harness 移动设备管理面板](docs/assets/mobile-device-management.png)
 
@@ -28,7 +28,7 @@ dsh plugin --profile web add dsh-plugin-mobile-gateway
 如果希望固定版本，可以在包名后指定版本号：
 
 ```bash
-dsh plugin --profile web add dsh-plugin-mobile-gateway@0.4.2
+dsh plugin --profile web add dsh-plugin-mobile-gateway@0.5.0
 ```
 
 也可以不经过 npm，直接安装 GitHub 版本：

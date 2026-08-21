@@ -16,10 +16,57 @@ function fakeApi() {
   const promptCalls = []
   const createCalls = []
   const settingsUpdates = []
+  const respondCalls = []
+  const muxFrames = []
+  const initialQuestions = [
+    {
+      rpcId: 'question-rpc-1',
+      payload: {
+        type: 'question/requested',
+        sessionId: 's1',
+        questions: [
+          { id: 'direction', header: 'Research', question: 'Choose a direction', options: [{ label: 'Core', description: 'Architecture' }, { label: 'Mobile' }], multiSelect: false },
+          { id: 'detail', question: 'Anything else?', options: [], multiSelect: false },
+        ],
+      },
+    },
+    {
+      rpcId: 'question-rpc-2',
+      payload: {
+        type: 'question/requested',
+        sessionId: 's2',
+        questions: [{ id: 'confirm', question: 'Continue?', options: [{ label: 'Yes' }, { label: 'No' }], multiSelect: false }],
+      },
+    },
+  ]
   return {
     promptCalls,
     settingsUpdates,
+    respondCalls,
     get _createCalls() { return createCalls },
+    events: {
+      async *mux(_request, signal) {
+        for (const frame of initialQuestions) yield frame
+        while (!signal.aborted) {
+          if (muxFrames.length > 0) yield muxFrames.shift()
+          else await new Promise((resolve) => setTimeout(resolve, 5))
+        }
+      },
+    },
+    async respond(message) {
+      respondCalls.push(message)
+      const outcome = message.result.ok ? 'answered' : 'cancelled'
+      muxFrames.push({
+        rpcId: `resolved-${respondCalls.length}`,
+        payload: {
+          type: 'question/resolved',
+          sessionId: message.result.ok ? message.result.value.sessionId : 's2',
+          questionRpcId: message.rpcId,
+          outcome,
+        },
+      })
+      return { accepted: true }
+    },
     host: { async describe() { return { rpcId: 'r', result: { ok: true, value: { version: 't', cwd: '/Users/lichaofan', attachedSessions: 1, canOpenPath: true } } } } },
     llm: {
       async models() { return { rpcId: 'r', result: { ok: true, value: { groups: [{ id: 'deepseek', name: 'DeepSeek', models: [{ id: 'deepseek-chat', name: 'DeepSeek Chat', reasoning: { efforts: [{ id: 'low', name: 'Low' }] } }] }], failures: [] } } } },
@@ -98,6 +145,36 @@ function waitFor(pred, timeout) { return new Promise((res) => { const t0 = Date.
   await new Promise((r) => ws.once('open', r))
   await waitFor(() => got.length > 0, 2000)
 
+  const interactionResults = []
+  const requestedReady = await waitFor(() => got.filter((m) => m.kind === 'question-requested').length === 2, 2000)
+  const requested = got.find((m) => m.kind === 'question-requested' && m.rpcId === 'question-rpc-1')
+  interactionResults.push(['question requested + replay', requestedReady && requested && requested.replay === true && requested.questions.length === 2 && requested.questions[0].options[0].description === 'Architecture'])
+
+  ws.send(JSON.stringify({
+    type: 'question-answer',
+    rpcId: 'question-rpc-1',
+    sessionId: 's1',
+    answers: [
+      { id: 'direction', selected: ['Mobile'] },
+      { id: 'detail', selected: [], custom: 'Security' },
+    ],
+  }))
+  const answerReady = await waitFor(() => got.some((m) => m.kind === 'question-response' && m.rpcId === 'question-rpc-1'), 2000)
+  const answerReceipt = got.find((m) => m.kind === 'question-response' && m.rpcId === 'question-rpc-1')
+  const answerCall = api.respondCalls.find((m) => m.rpcId === 'question-rpc-1')
+  interactionResults.push(['question answer', answerReady && answerReceipt.accepted === true && answerCall.type === 'client-response' && answerCall.result.value.answer.answers[1].custom === 'Security'])
+  const answeredResolved = await waitFor(() => got.some((m) => m.kind === 'question-resolved' && m.rpcId === 'question-rpc-1' && m.outcome === 'answered'), 2000)
+  interactionResults.push(['question answered resolution', answeredResolved])
+
+  ws.send(JSON.stringify({ type: 'question-cancel', rpcId: 'question-rpc-2', sessionId: 's2' }))
+  const cancelReady = await waitFor(() => got.some((m) => m.kind === 'question-response' && m.rpcId === 'question-rpc-2'), 2000)
+  const cancelReceipt = got.find((m) => m.kind === 'question-response' && m.rpcId === 'question-rpc-2')
+  const cancelCall = api.respondCalls.find((m) => m.rpcId === 'question-rpc-2')
+  interactionResults.push(['question cancel', cancelReady && cancelReceipt.accepted === true && cancelCall.result.ok === false && cancelCall.result.error.code === 'cancelled'])
+  const cancelledResolved = await waitFor(() => got.some((m) => m.kind === 'question-resolved' && m.rpcId === 'question-rpc-2' && m.outcome === 'cancelled'), 2000)
+  interactionResults.push(['question cancelled resolution', cancelledResolved])
+  for (const [name, pass] of interactionResults) console.log((pass ? 'PASS ' : 'FAIL ') + name)
+
   const cases = [
     ['workspaces', { type: 'workspaces' }, (m) => m.kind === 'workspaces'],
     ['sessions', { type: 'sessions' }, (m) => m.kind === 'sessions'],
@@ -134,7 +211,7 @@ function waitFor(pred, timeout) { return new Promise((res) => { const t0 = Date.
     ['providers', { type: 'providers' }, (m) => m.kind === 'providers' && m.providers[0].provider === 'deepseek'],
     ['missing sessionId', { type: 'history' }, (m) => m.kind === 'error' && m.code === 'bad-request'],
   ]
-  const results = []
+  const results = [...interactionResults]
   let i = 0
   const sendNext = () => {
     if (i >= cases.length) { finish(); return }
