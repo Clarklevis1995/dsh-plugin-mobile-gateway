@@ -1,7 +1,7 @@
 {
   "name": "dsh-plugin-mobile-gateway",
-  "version": "0.6.0",
-  "description": "Persistent WebSocket gateway for dsh: exposes /ws/mobile on the web server and forwards agent session output to connected mobile clients",
+  "version": "0.6.1",
+  "description": "update readme",
   "main": "lib/index.mjs",
   "files": [
     "bin",

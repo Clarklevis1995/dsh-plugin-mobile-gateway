@@ -1,279 +1,163 @@
 <p align="center">
-  <img src="docs/assets/whale-girl-ios-app-promo-16x9.png" alt="鲸鱼娘展示 DeepSeek Harness Mobile 与移动网关" width="100%">
+  <img src="docs/assets/whale-girl-ios-app-promo-16x9.png" alt="DeepSeek Harness Mobile 与移动网关" width="100%">
 </p>
 
 # dsh-plugin-mobile-gateway
 
-为 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 提供经过设备鉴权的持久化 WebSocket 网关，让 iOS 等移动客户端能够查看工作区和历史会话、收发文字与图片、接收 Agent 实时输出、处理 Human-in-the-loop 选择，以及调整会话模型与权限。
+让 iPhone 通过经过设备鉴权的 WebSocket 连接 DeepSeek Harness。安装后，Harness WebUI 左侧边栏会出现“移动设备”入口，可直接开启网关、生成配对二维码和管理可信设备。
 
-![DeepSeek Harness 移动设备管理面板](docs/assets/mobile-device-management.png)
+- WebSocket：`/ws/mobile`
+- 局域网：`ws://<局域网 IP>:3081/ws/mobile`
+- 公网：`wss://<公网 IP>/ws/mobile`
+- 协议文档：[PROTOCOL.md](PROTOCOL.md)
 
-- WebSocket 端点：`/ws/mobile`
-- 管理入口：Harness WebUI 左侧边栏底部的“移动设备”
-- 默认安全策略：网关默认关闭、设备鉴权默认开启、管理接口仅允许本机访问
-- 完整通信格式：[`PROTOCOL.md`](PROTOCOL.md)
+## 配套 iOS 客户端
 
-## 直接安装（推荐，无需下载源码）
+[DeepSeek Harness Mobile](https://github.com/Clarklevis1995/dsh-mobile) 是本仓库的兄弟项目。它是面向 iOS 17+ 的 SwiftUI 原生客户端，支持工作区与会话、历史和实时对话、图片、Agent 执行轨迹、Human-in-the-loop、模型与权限设置。
 
-如果使用 nvm 安装 Node.js，并希望不打开 WebUI、直接从服务器终端生成 iOS 配对字符串，请参照[公网 IP 命令行配对指南](docs/public-ip-deployment-guide.md)。
+<table>
+  <tr>
+    <td width="33.33%" align="center"><img src="https://raw.githubusercontent.com/Clarklevis1995/dsh-mobile/main/Docs/images/screenshots/home.png" alt="iOS 工作区首页" width="100%"></td>
+    <td width="33.33%" align="center"><img src="https://raw.githubusercontent.com/Clarklevis1995/dsh-mobile/main/Docs/images/screenshots/conversation-dark.png" alt="iOS 深色对话界面" width="100%"></td>
+    <td width="33.33%" align="center"><img src="https://raw.githubusercontent.com/Clarklevis1995/dsh-mobile/main/Docs/images/screenshots/pairing-dark.png" alt="iOS 设备配对界面" width="100%"></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>工作区首页</strong></td>
+    <td align="center"><strong>实时对话</strong></td>
+    <td align="center"><strong>设备配对</strong></td>
+  </tr>
+</table>
 
-### 1. 安装插件
+## 安装插件
 
-确保本机已经安装并能正常运行 DeepSeek Harness，然后执行：
+前提：已经安装 `dsh` CLI，并能正常启动 `dsh web`。
 
 ```bash
 dsh plugin --profile web add dsh-plugin-mobile-gateway@latest
 ```
 
-这条命令会在执行时从 npm 获取 `latest` 标签指向的最新插件、安装依赖，并将插件加入 `web` profile 的 bundle 列表。用户不需要 clone 仓库，也不需要运行 `pnpm install`。已经安装的插件不会后台自动升级；重新安装最新版本后需要重启 WebUI。
-
-如果希望固定版本，可以在包名后指定版本号：
+安装后停止并重新启动 WebUI：
 
 ```bash
-dsh plugin --profile web add dsh-plugin-mobile-gateway@0.6.0
+dsh web
 ```
 
-也可以不经过 npm，直接安装 GitHub 版本：
+打开 WebUI，确认左侧边栏底部出现“移动设备”。
+
+## 局域网配对
+
+适用于 DSH 电脑和 iPhone 位于同一个可互访的局域网。
+
+1. 打开 WebUI 的“移动设备”。
+2. 开启“允许移动设备连接”。
+3. 保持“设备鉴权”开启。
+4. 确认面板显示 `ws://<电脑局域网 IP>:3081/ws/mobile`。
+5. 填写设备名称并点击“生成配对二维码”。
+6. 在 iOS 客户端打开“设备认证”，扫描二维码。
+7. WebUI 的可信设备显示“在线”后即完成。
+
+如果系统防火墙拦截连接，只允许私有网络访问 TCP `3081`。不要把 3081 开放到公网。
+
+## 公网 IP 配对
+
+适用于带固定公网 IPv4 的 Ubuntu/Debian 服务器（其他发行版本可自行尝试）。Node.js 通过 nvm 安装时，也使用下面的命令。
+
+### 1. 配置端口
+
+从云厂商控制台复制服务器的公网 IPv4，并在安全组中放行入站 TCP `80` 和 `443`。
+
+不要开放 TCP `3080` 和 `3081`！！！
+不要开放 TCP `3080` 和 `3081`！！！
+不要开放 TCP `3080` 和 `3081`！！！
+
+### 2. 配置公网入口
+
+把示例 IP 替换为云厂商控制台中的实际公网 IPv4：
 
 ```bash
-dsh plugin --profile web add github:Clarklevis1995/dsh-plugin-mobile-gateway
-```
-
-### 2. 重启 Harness WebUI
-
-插件组合树只在 WebUI 启动时加载。安装完成后，停止当前的 `dsh web` 进程并重新启动它。刷新浏览器本身不足以加载新安装的服务端插件。
-
-可以在启动前检查插件是否进入组合配置：
-
-```bash
-dsh --profile web --dump-config | grep -A3 mobile-gateway
-```
-
-启动 WebUI 后，左侧边栏底部应出现“移动设备”入口。
-
-### 3. 局域网直接连接（无需域名、证书或反向代理）
-
-插件安装并重启 `dsh web` 后，会额外创建一个仅用于移动端的局域网监听：
-
-```text
-ws://<运行 DSH 的电脑局域网 IP>:3081/ws/mobile
-```
-
-打开 WebUI 的“移动设备”面板时，插件会自动检测电脑的私有 IPv4，并优先把可用地址填入“WebSocket 地址”。开启移动网关、生成二维码并用 iOS 客户端扫码即可。电脑和手机需要位于可互访的同一局域网；如果系统防火墙询问是否允许 Node 接收入站连接，请允许私有网络访问 TCP `3081`。
-
-该端口只接受来自本机或私有网络地址的 `/ws/mobile` WebSocket Upgrade，不提供 WebUI，也不暴露 `/mgw/*` 管理接口。局域网监听始终要求设备配对鉴权，WebUI 中的 Debug 鉴权开关不会关闭它的鉴权。
-
-### 4. 一条命令配置公网 IP（推荐，无需域名）
-
-如果 Harness 部署在带固定公网 IPv4 的腾讯云 Ubuntu/Debian 服务器上，先在腾讯云安全组中放行入站 TCP `80` 和 `443`，然后在服务器执行：
-
-```bash
-sudo npx --yes dsh-plugin-mobile-gateway setup
-```
-
-安装器会自动从腾讯云实例元数据读取公网 IPv4，并完成：
-
-- 安装 Nginx 和独立 Python 虚拟环境中的 Certbot
-- 为公网 IP 申请受系统信任的短期 TLS 证书
-- 只把 `wss://公网IP/ws/mobile` 代理到 `127.0.0.1:3080`
-- 对普通 HTTP、WebUI、`/mgw/*` 管理接口和其他路径返回 `404`
-- 创建每天两次运行的 systemd 证书续期任务
-- 把公网地址写入 `/etc/dsh-mobile-gateway/public-url`，插件启动时自动读取
-
-因此 DSH 仍然只需监听 `127.0.0.1:3080`，不需要把 3080 端口暴露到公网，也不需要 Tunnel、域名或手写 Nginx 配置。
-
-邮箱是可选项；希望接收 Let's Encrypt 账户通知时可追加 `--email you@example.com`。如果无法从腾讯云元数据识别公网地址，或 DSH 使用了其他本地端口：
-
-```bash
-sudo npx --yes dsh-plugin-mobile-gateway setup \
+sudo env "PATH=$PATH" npx --yes dsh-plugin-mobile-gateway@latest setup \
   --ip 203.0.113.10 \
-  --port 3080 \
-  --email you@example.com
+  --port 3080
 ```
 
-执行完成后重启 `dsh web`，打开 WebUI 的“移动设备”面板。公网 WebSocket 地址会自动显示为 `wss://公网IP/ws/mobile`；开启移动网关并生成二维码即可。
-
-查看状态或移除安装器生成的公网入口：
+安装器完成后，重新启动：
 
 ```bash
-sudo npx --yes dsh-plugin-mobile-gateway status
-sudo npx --yes dsh-plugin-mobile-gateway remove
+dsh web
 ```
 
-`remove` 只删除本插件生成的 Nginx 配置、地址文件和续期任务，不卸载软件，也不删除已有证书。IP 证书有效期约 6 天，必须保持 80 端口可达以便自动续期。相关能力来自 [Let's Encrypt 的短期 IP 地址证书](https://letsencrypt.org/2026/03/11/shorter-certs-certbot/)；公网 IP 自动识别使用[腾讯云实例元数据](https://cloud.tencent.com/document/product/213/17940)。
+### 3. 打开远程 WebUI（使用端口转发，VSCode等IDE自带）
 
-#### 已有域名或反向代理
-
-打开“移动设备”面板：
-
-1. 开启“允许移动设备连接”。
-2. 保持“设备鉴权”开启。
-3. 在“WebSocket 地址”中填写手机可以访问的地址。
-
-本机浏览器调试可以使用：
-
-```text
-ws://127.0.0.1:3080/ws/mobile
-```
-
-真机不能使用 `127.0.0.1`，因为它在手机上指向手机自身。同一私有局域网可使用插件自动提供的 `ws://局域网IP:3081/ws/mobile`；公网连接则应通过 TLS 反向代理提供：
-
-```text
-wss://gateway.example.com/ws/mobile
-```
-
-只有 localhost、`.local` 主机名及 RFC 1918/链路本地私有地址允许使用 `ws://`。其他地址会强制要求 `wss://`，以免一次性配对信息和长期连接暴露在公网明文网络中。
-
-### 5. 配对 iOS 客户端
-
-1. 在 WebUI 中填写设备名称，例如 `iPhone`。
-2. 点击“生成配对二维码”。
-3. 在 iOS 客户端首页点击认证按钮：
-   - 选择“扫描二维码”，扫码后自动连接；或
-   - 选择“手动输入配对信息”，粘贴 WebUI 中复制的 Base64URL 配对 Token，再点击连接。
-4. iOS 首次连接成功后会把长期设备凭证保存到 Keychain。配对二维码只能使用一次，并会在 5 分钟后过期。
-5. WebUI 的可信设备列表显示“在线”，iOS 首页连接状态变为绿色，即表示连接完成。
-
-后续启动 iOS 客户端时会使用 Keychain 中的长期凭证重新连接，不需要再次扫码。重新配对同一套 iOS 安装也会复用其设备身份，不会重复创建可信设备。
-
-## 日常使用
-
-连接成功后，移动客户端可以：
-
-- 浏览工作区、未分组会话和服务端目录
-- 创建工作区与新会话
-- 加载历史消息与轨迹
-- 从历史消息安全加载图片，并把 iOS 本地图片发送给 Agent
-- 实时接收思考、工具调用和最终回答
-- 向远端 Agent 发送任务
-- 查询或切换会话模型、推理等级和访问权限
-- 查看上下文用量与会话统计
-
-关闭“允许移动设备连接”会立即断开移动端，但不会影响普通 Harness WebUI。网关开启后，如果默认 5 分钟内没有可信设备成功连接，会自动关闭。
-
-## 可信设备管理
-
-长期设备凭证只在首次配对成功时返回一次，移动端应保存在 Keychain。服务端仅保存凭证的 SHA-256 摘要：
-
-```text
-~/.dsh/mobile-gateway-devices.json
-```
-
-在 WebUI 的“可信设备”列表中点击“吊销”会：
-
-- 从可信设备列表删除该设备
-- 立即关闭该设备现有的 WebSocket 连接
-- 使该设备保存的长期凭证永久失效
-
-被吊销的设备再次连接会收到 `401 Unauthorized`，需要重新配对。
-
-## 更新插件（无需源码）
-
-插件会被安装到 profile 中，不会自动更新。升级时重新安装最新 npm 版本并重启 WebUI：
+如果 WebUI 运行在远程服务器，在自己的电脑执行：
 
 ```bash
-dsh plugin --profile web remove dsh-plugin-mobile-gateway
-dsh plugin --profile web add dsh-plugin-mobile-gateway
+ssh -N -L 3080:127.0.0.1:3080 <服务器用户名>@<服务器公网 IP>
 ```
 
-然后停止并重新启动 `dsh web`。
+然后在本地浏览器打开：
 
-## 卸载
+```text
+http://127.0.0.1:3080
+```
+
+### 4. 使用 WebUI 配对
+
+1. 打开“移动设备”。
+2. 开启“允许移动设备连接”。
+3. 保持“设备鉴权”开启。
+4. 确认 WebSocket 地址为 `wss://<公网 IP>/ws/mobile`。
+5. 填写设备名称并点击“生成配对二维码”。
+6. iPhone 打开“设备认证”，扫描二维码；也可以复制 Base64URL 配对字符串手动连接。
+7. WebUI 的可信设备显示“在线”后即完成。
+
+二维码只能使用一次，并会在 5 分钟后过期；超时后在 WebUI 重新生成即可。
+
+## 公网入口管理
+
+查看状态：
+
+```bash
+sudo env "PATH=$PATH" npx --yes dsh-plugin-mobile-gateway@latest status
+```
+
+移除公网入口：
+
+```bash
+sudo env "PATH=$PATH" npx --yes dsh-plugin-mobile-gateway@latest remove
+```
+
+## 更新插件
+
+重新安装 npm 最新版本：
+
+```bash
+dsh plugin --profile web add dsh-plugin-mobile-gateway@latest
+```
+
+随后停止并重新启动 `dsh web`。
+
+## 卸载插件
 
 ```bash
 dsh plugin --profile web remove dsh-plugin-mobile-gateway
 ```
-
-如果旧版 DSH 没有自动清理 bundle，再从 `~/.dsh/profiles/web/package.json` 的 `dsh.profile.bundles` 中删除 `dsh-plugin-mobile-gateway`，随后重启 WebUI。
-
-卸载插件不会自动删除 `~/.dsh/mobile-gateway-devices.json`。
-
-## 手动公网部署
-
-不使用一键安装器时，公网入口应由 Nginx、Caddy 或其他反向代理提供 HTTPS/WSS，并且只公开 WebSocket 路由，不要公开 `/mgw` 管理接口或整个未鉴权 WebUI。
-
-Nginx 核心配置示例：
-
-```nginx
-location = /ws/mobile {
-    proxy_pass http://127.0.0.1:3080;
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection "upgrade";
-}
-```
-
-TLS 证书、域名、防火墙、访问日志保护和代理层速率限制由部署环境负责。
-
-如需把公网地址写入 profile，可在 `cordis.patch.yml` 的 `mobile-gateway` 配置段覆盖：
-
-```yaml
-- id: mobile-gateway
-  config:
-    path: /ws/mobile
-    gatewayEnabled: false
-    gatewayWaitTimeoutMs: 300000
-    requireAuth: true
-    adminLoopbackOnly: true
-    lanEnabled: true
-    lanHost: 0.0.0.0
-    lanPort: 3081
-    lanAdvertiseHost: ''
-    publicUrl: wss://gateway.example.com/ws/mobile
-    publicUrlFile: /etc/dsh-mobile-gateway/public-url
-    pairingTtlMs: 300000
-    allowQueryToken: false
-```
-
-后置 patch 会替换整个配置段，因此覆盖时应保留所有需要的字段。
 
 ## 常见问题
 
-| 现象 | 原因与处理方式 |
+| 现象 | 处理方式 |
 |---|---|
-| WebUI 没有“移动设备”入口 | 确认使用 `--profile web` 安装；执行 `--dump-config` 检查组合树，然后完整重启 `dsh web` |
-| iOS 连接提示 `503` | 移动网关尚未开启，回到 WebUI 开启“允许移动设备连接” |
-| iOS 连接提示 `401` | 配对码过期、长期凭证无效或设备已被吊销；删除客户端旧凭证后重新配对 |
-| 真机无法连接 `127.0.0.1` | `127.0.0.1` 在手机上不是电脑；局域网使用面板自动显示的 `ws://私有IP:3081/ws/mobile`，公网使用 `wss://` 地址 |
-| 同一 Wi-Fi 仍无法连接局域网地址 | 确认手机与电脑所在网络允许设备互访，并放行电脑入站 TCP 3081；访客 Wi-Fi 通常会启用客户端隔离 |
-| 一键配置无法识别公网 IP | 确认命令运行在腾讯云 CVM 内，或通过 `--ip <公网 IPv4>` 显式指定 |
-| Certbot 申请或续期失败 | 确认腾讯云安全组和服务器防火墙都允许入站 TCP 80/443，并确认公网 IP 没有变化 |
-| 想检查自动续期 | 执行 `sudo systemctl status dsh-mobile-gateway-cert-renew.timer` 和 `sudo npx --yes dsh-plugin-mobile-gateway status` |
-| 二维码无法再次使用 | 配对码设计为一次性且 5 分钟过期，重新生成即可 |
-| 修改配置后没有生效 | 插件与 profile composition 在启动时加载，需要重启 WebUI 进程 |
-| 需要排查服务端原因 | 查看 `/tmp/mobile-gateway.log`，其中包含连接、鉴权、查询与错误记录 |
-
-## 安全说明
-
-- 不建议关闭设备鉴权。该开关仅用于本机 Debug，重启后会恢复安全默认值。
-- `/mgw/*` 默认只接受 loopback 请求，不应通过公网反向代理暴露。
-- 长期 token 默认禁止通过 URL query 传输，避免进入代理日志、浏览器历史或监控系统。
-- 配对二维码和长期 token 不会明文写入服务端磁盘。
+| WebUI 没有“移动设备” | 确认安装在 `web` profile，并完整重启 `dsh web` |
+| iOS 收到 `503` | 回到 WebUI 开启“允许移动设备连接” |
+| iOS 收到 `401` | 在 WebUI 重新生成二维码并配对 |
+| 公网连接超时 | 检查云安全组、服务器防火墙和 TCP `80/443` |
+| 公网地址没有自动显示 | 确认已执行 `setup --ip <公网 IP>`，然后重启 `dsh web` |
+| 需要查看服务端日志 | 执行 `tail -f /tmp/mobile-gateway.log` |
 
 ## 源码开发
 
-只有需要修改插件本身时才需要源码安装：
-
 ```bash
 dsh plugin --profile web add file:/absolute/path/to/dsh-plugin-mobile-gateway
+npm test
 ```
 
-`file:` 是复制安装。修改源码后必须先 remove、再 add，并重启 WebUI；不要使用 `link:`，否则依赖可能从源码目录解析而导致 `ws` 等包无法找到。
-
-测试命令：
-
-```bash
-# 鉴权、配对与吊销
-NODE_PATH=/path/to/dsh/node_modules node test/auth.test.mjs
-
-# mock Harness + 真实 WebSocket 客户端的完整协议链路
-NODE_PATH=/path/to/dsh/node_modules node test/gateway.test.mjs
-
-# 公网 IP 安装器的参数、Nginx 隔离与续期配置
-node test/setup-ip.test.mjs
-
-# 独立局域网监听、强制鉴权与管理接口隔离
-node test/lan.test.mjs
-```
-
-版本历史与全部 WebSocket 消息类型见 [`PROTOCOL.md`](PROTOCOL.md)。
+源码修改后需要重新安装插件并重启 `dsh web`。
