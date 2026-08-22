@@ -4,7 +4,7 @@
 
 # dsh-plugin-mobile-gateway
 
-为 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 提供经过设备鉴权的持久化 WebSocket 网关，让 iOS 等移动客户端能够查看工作区和历史会话、接收 Agent 实时输出、处理 Human-in-the-loop 选择、发送任务，以及调整会话模型与权限。
+为 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 提供经过设备鉴权的持久化 WebSocket 网关，让 iOS 等移动客户端能够查看工作区和历史会话、收发文字与图片、接收 Agent 实时输出、处理 Human-in-the-loop 选择，以及调整会话模型与权限。
 
 ![DeepSeek Harness 移动设备管理面板](docs/assets/mobile-device-management.png)
 
@@ -15,20 +15,22 @@
 
 ## 直接安装（推荐，无需下载源码）
 
+如果使用 nvm 安装 Node.js，并希望不打开 WebUI、直接从服务器终端生成 iOS 配对字符串，请参照[公网 IP 命令行配对指南](docs/public-ip-deployment-guide.md)。
+
 ### 1. 安装插件
 
 确保本机已经安装并能正常运行 DeepSeek Harness，然后执行：
 
 ```bash
-dsh plugin --profile web add dsh-plugin-mobile-gateway
+dsh plugin --profile web add dsh-plugin-mobile-gateway@latest
 ```
 
-这条命令会直接从 npm 获取插件、安装依赖，并将插件加入 `web` profile 的 bundle 列表。用户不需要 clone 仓库，也不需要运行 `pnpm install`。
+这条命令会在执行时从 npm 获取 `latest` 标签指向的最新插件、安装依赖，并将插件加入 `web` profile 的 bundle 列表。用户不需要 clone 仓库，也不需要运行 `pnpm install`。已经安装的插件不会后台自动升级；重新安装最新版本后需要重启 WebUI。
 
 如果希望固定版本，可以在包名后指定版本号：
 
 ```bash
-dsh plugin --profile web add dsh-plugin-mobile-gateway@0.5.0
+dsh plugin --profile web add dsh-plugin-mobile-gateway@0.6.0
 ```
 
 也可以不经过 npm，直接安装 GitHub 版本：
@@ -141,6 +143,7 @@ wss://gateway.example.com/ws/mobile
 - 浏览工作区、未分组会话和服务端目录
 - 创建工作区与新会话
 - 加载历史消息与轨迹
+- 从历史消息安全加载图片，并把 iOS 本地图片发送给 Agent
 - 实时接收思考、工具调用和最终回答
 - 向远端 Agent 发送任务
 - 查询或切换会话模型、推理等级和访问权限

@@ -18,6 +18,14 @@ function fakeApi() {
   const settingsUpdates = []
   const respondCalls = []
   const muxFrames = []
+  const imageAttachment = {
+    attachmentId: 'att-image-1',
+    mediaType: 'image/png',
+    bytes: 8,
+    width: 2,
+    height: 2,
+    name: 'sample.png',
+  }
   const initialQuestions = [
     {
       rpcId: 'question-rpc-1',
@@ -90,7 +98,7 @@ function fakeApi() {
       async list() { return { rpcId: 'r', result: { ok: true, value: { items: [] } } } },
       async history() {
         const fakeEvents = [
-          { type: 'user/message', seq: 1, time: 1, data: { content: [{ type: 'text', text: 'hi' }] } },
+          { type: 'user/message', seq: 1, time: 1, data: { content: [{ type: 'image', attachment: imageAttachment }, { type: 'text', text: 'hi' }] } },
           { type: 'assistant/chunk', seq: 2, time: 2, data: { turn: 1, step: 0, chunk: { type: 'text-delta', text: 'a' } } },
           { type: 'assistant/message', seq: 3, time: 3, data: { turn: 1, step: 0, message: { content: [{ type: 'text', text: 'hello' }] } } },
           { type: 'tool/call', seq: 4, time: 4, data: { turn: 1, step: 0, callId: 'c1', name: 'bash', arguments: '{}' } },
@@ -101,6 +109,15 @@ function fakeApi() {
         return { rpcId: 'r', result: { ok: true, value: { events: fakeEvents.map((e) => ({ event: e })), hasMore: false, projections: { asOfSeq: 42, values: { tokenUsage: { totals: { inputTokens: 10, outputTokens: 5 }, last: null }, contextPressure: { contextWindow: 128000, pressureTokens: 1500, surfaceTokens: 2000 }, permissions: { preset: 'ask', sandbox: 'none', approval: 'ask' }, sessionStats: { turns: 6, steps: 69, llmMs: 2280000, toolMs: 41400, ttftMs: 2600, ttftSteps: 1, decodeMs: 5000, decodeTokens: 385, lastTurn: 6, openStep: null, pendingCalls: {} } } } } } }
       },
       async search() { return { rpcId: 'r', result: { ok: true, value: { items: [], hasMore: false } } } },
+      async attachment(req) {
+        return {
+          rpcId: 'r',
+          result: {
+            ok: true,
+            value: { attachment: { ...imageAttachment, attachmentId: req.payload.attachmentId }, data: 'iVBORw0KGgo=' },
+          },
+        }
+      },
       async models() { return { rpcId: 'r', result: { ok: true, value: { current: { provider: 'deepseek', model: 'deepseek-chat' }, routable: true, groups: [{ id: 'deepseek', name: 'DeepSeek', models: [{ id: 'deepseek-chat', name: 'DeepSeek Chat', reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }], defaultEffort: 'low' } }] }], failures: [] } } } },
       async selectModel(req) { return { rpcId: 'r', result: { ok: true, value: { selected: req.payload } } } },
       async prompt(req) { promptCalls.push(req.payload); return { rpcId: 'r', result: { ok: true, value: { accepted: true, command: { kind: 'success', text: 'switched to ' + (req.payload.content[0].text) } } } } },
@@ -173,12 +190,24 @@ function waitFor(pred, timeout) { return new Promise((res) => { const t0 = Date.
   interactionResults.push(['question cancel', cancelReady && cancelReceipt.accepted === true && cancelCall.result.ok === false && cancelCall.result.error.code === 'cancelled'])
   const cancelledResolved = await waitFor(() => got.some((m) => m.kind === 'question-resolved' && m.rpcId === 'question-rpc-2' && m.outcome === 'cancelled'), 2000)
   interactionResults.push(['question cancelled resolution', cancelledResolved])
+  listeners['session/event']({ id: 's1' }, {
+    type: 'user/message',
+    seq: 88,
+    time: 88,
+    data: { content: [{ type: 'image', attachment: { attachmentId: 'att-live', mediaType: 'image/jpeg', bytes: 12, width: 3, height: 4, name: 'live.jpg' } }, { type: 'text', text: 'live image' }], source: { kind: 'user' } },
+  })
+  const liveImageReady = await waitFor(() => got.some((m) => m.kind === 'event' && m.seq === 88), 2000)
+  const liveImageEvent = got.find((m) => m.kind === 'event' && m.seq === 88)
+  interactionResults.push(['live image reference', liveImageReady && liveImageEvent.event.images[0].attachmentId === 'att-live' && liveImageEvent.event.text === 'live image'])
   for (const [name, pass] of interactionResults) console.log((pass ? 'PASS ' : 'FAIL ') + name)
 
   const cases = [
     ['workspaces', { type: 'workspaces' }, (m) => m.kind === 'workspaces'],
     ['sessions', { type: 'sessions' }, (m) => m.kind === 'sessions'],
     ['history+projections', { type: 'history', sessionId: 's1' }, (m) => m.kind === 'history' && m.sessionId === 's1' && m.projections && m.projections.values.tokenUsage && m.bytes > 0],
+    ['history image reference', { type: 'history', sessionId: 's1', view: 'conversation' }, (m) => m.kind === 'history' && m.events[0].data.content[0].attachment.attachmentId === 'att-image-1'],
+    ['attachment bytes', { type: 'attachment', sessionId: 's1', attachmentId: 'att-image-1' }, (m) => m.kind === 'attachment' && m.sessionId === 's1' && m.attachment.mediaType === 'image/png' && m.data === 'iVBORw0KGgo='],
+    ['attachment missing id', { type: 'attachment', sessionId: 's1' }, (m) => m.kind === 'error' && m.code === 'bad-request'],
     ['history byte-capped', { type: 'history', sessionId: 's1', maxBytes: 300 }, (m) => m.kind === 'history' && m.bytes <= 350 && m.hasMore === true && typeof m.nextBeforeSeq === 'number' && m.events.length >= 1 && m.events[0].seq === m.nextBeforeSeq],
     ['history conversation trim', { type: 'history', sessionId: 's1', view: 'conversation', maxBytes: 200000 }, (m) => m.kind === 'history' && m.view === 'conversation' && !m.events.some((e) => e.type === 'assistant/chunk' || e.type === 'request/header') && m.events.some((e) => e.type === 'tool/result') && (() => { const tr = m.events.find((e) => e.type === 'tool/result'); const txt = tr.data.message.content[0].content[0].text; return txt.length <= 2001; })() && m.hasMore === false && m.nextBeforeSeq === undefined],
     ['search', { type: 'search', query: 'q' }, (m) => m.kind === 'search'],
@@ -196,6 +225,9 @@ function waitFor(pred, timeout) { return new Promise((res) => { const t0 = Date.
 ['message create in workspace', { type: 'message', text: 'hi', workspaceId: 'w1' }, (m) => m.kind === 'sent' && api._createCalls.length >= 1 && JSON.stringify(api._createCalls[api._createCalls.length - 1]) === JSON.stringify({ workspaceId: 'w1' })],
     ['message create with cwd', { type: 'message', text: 'hi', cwd: '/tmp' }, (m) => m.kind === 'sent' && JSON.stringify(api._createCalls[api._createCalls.length - 1]) === JSON.stringify({ cwd: '/tmp' })],
     ['message create both -> workspaceId wins', { type: 'message', text: 'hi', workspaceId: 'w2', cwd: '/tmp' }, (m) => m.kind === 'sent' && JSON.stringify(api._createCalls[api._createCalls.length - 1]) === JSON.stringify({ workspaceId: 'w2' })],
+    ['message image upload', { type: 'message', sessionId: 's1', text: 'describe this', clientTimeZone: 'Asia/Shanghai', images: [{ mediaType: 'image/jpeg', data: '/9j/2Q==', name: 'photo.jpg' }] }, (m) => { const p = api.promptCalls[api.promptCalls.length - 1]; return m.kind === 'sent' && p.clientTimeZone === 'Asia/Shanghai' && p.content[0].type === 'image' && p.content[0].data === '/9j/2Q==' && p.content[1].text === 'describe this' }],
+    ['message image only', { type: 'message', sessionId: 's1', images: [{ mediaType: 'image/png', data: 'iVBORw0KGgo=' }] }, (m) => { const p = api.promptCalls[api.promptCalls.length - 1]; return m.kind === 'sent' && p.content.length === 1 && p.content[0].type === 'image' }],
+    ['message invalid image', { type: 'message', sessionId: 's1', images: [{ mediaType: 'image/tiff', data: 'AA==' }] }, (m) => m.kind === 'error' && m.code === 'bad-request'],
     ['agent-presets', { type: 'agent-presets' }, (m) => m.kind === 'agent-presets' && m.presets.length === 2 && m.presets[0].isDefault === true],
     ['defaults', { type: 'defaults' }, (m) => m.kind === 'defaults' && m.agentPresetDefault === 'standard' && m.permissionDefault === 'ask'],
     ['set-default agent-preset', { type: 'set-default', target: 'agent-preset', value: 'minimal' }, (m) => m.kind === 'set-default' && m.applied === true && api.settingsUpdates.some((u) => u.ns === 'agent-presets' && u.patch.default === 'minimal')],

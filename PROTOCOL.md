@@ -1,11 +1,11 @@
 # dsh Mobile Gateway — WebSocket 协议参考
 
-移动端通过一个经过设备鉴权的 WebSocket 连接与 dsh 通信：订阅 agent 实时输出、发送消息、处理 Human-in-the-loop 提问、查询会话/工作区/历史、调整会话配置。本协议由持久化插件 `dsh-plugin-mobile-gateway` 实现（v0.5.0）。
+移动端通过一个经过设备鉴权的 WebSocket 连接与 dsh 通信：订阅 agent 实时输出、发送文字和图片、处理 Human-in-the-loop 提问、查询会话/工作区/历史、调整会话配置。本协议由持久化插件 `dsh-plugin-mobile-gateway` 实现（v0.6.0）。
 
 - **本机端点**：`ws://127.0.0.1:3080/ws/mobile`（与 dsh web GUI 同端口）
 - **局域网端点**：`ws://<电脑的私有局域网 IP>:3081/ws/mobile`（插件独立监听，只提供经过鉴权的 WebSocket）
 - **公网端点**：必须由 TLS 反向代理提供 `wss://<域名>/ws/mobile`
-- **帧格式**：全部为 JSON 文本帧（UTF-8）
+- **帧格式**：全部为 JSON 文本帧（UTF-8）；图片字节使用标准 Base64
 - **连接即推送**：连上后服务端立刻发送一条 `hello`，之后 agent 输出以 `event` 帧实时推送
 
 ---
@@ -77,7 +77,7 @@ const pairingText = Buffer.from(JSON.stringify(payload), 'utf8').toString('base6
 ```json
 { "kind": "paired", "token": "<长期设备 token>",
   "device": { "id": "...", "name": "iPhone", "createdAt": 1787111700000 } }
-{ "kind": "hello", "protocol": 2, "authenticated": true,
+{ "kind": "hello", "protocol": 3, "capabilities": ["images"], "authenticated": true,
   "device": { "id": "...", "name": "iPhone" }, "port": 3080, "clients": 1 }
 ```
 
@@ -265,6 +265,48 @@ Agent 调用 DSH 的 `ask_user_question` 工具时，插件通过 API Gateway �
 - `sessionId`：可选。省略时**自动创建新会话**（可用 `workspaceId` 或 `cwd` 指定归属工作区，至多一个，workspaceId 优先）
 - `mode`：`"queue"`（排队，默认）/ `"steer"`（打断当前回合）
 - `text` 以 `/` 开头会被当作**斜杠命令**（如 `/permission ask`），宿主直接执行、**绝不发给模型**
+- `text` 与 `images` 至少提供一项；因此支持纯图片消息
+- `clientTimeZone`：可选 IANA 时区，例如 `Asia/Shanghai`，宿主会校验后记录到这条用户消息
+
+### 发送图片
+
+iOS 将本地图片原始文件数据编码成**标准 Base64**，不要包含 `data:image/...;base64,` 前缀：
+
+```json
+{
+  "type": "message",
+  "sessionId": "session-abc",
+  "text": "请描述这两张图片",
+  "clientTimeZone": "Asia/Shanghai",
+  "images": [
+    {
+      "mediaType": "image/jpeg",
+      "data": "/9j/4AAQSkZJRgABAQ...",
+      "name": "IMG_1024.JPG"
+    },
+    {
+      "mediaType": "image/png",
+      "data": "iVBORw0KGgoAAA...",
+      "name": "diagram.png"
+    }
+  ]
+}
+```
+
+支持的 `mediaType`：`image/png`、`image/jpeg`、`image/webp`、`image/gif`。宿主会验证 Base64、文件签名、格式、尺寸、像素数、单图大小、图片数量和总大小；声明 MIME 与真实字节不一致会拒绝整条消息，且不会产生部分附件。
+
+当前 DSH 默认最多 20 张图片、单图约 3.5 MiB、单条消息图片总计 100 MiB，实际值以最近一次 `history.projections.values.imageLimits` 为准。WebSocket 单帧上限默认 144 MiB，用于容纳 100 MiB 图片经 Base64 后的 JSON 请求；反向代理也必须允许相应大小的 WebSocket 帧。
+
+Swift 编码示例：
+
+```swift
+let data = try Data(contentsOf: imageURL)
+let image = [
+    "mediaType": "image/jpeg",
+    "data": data.base64EncodedString(),
+    "name": imageURL.lastPathComponent
+]
+```
 
 ```json
 → { "kind": "sent", "sessionId": "session-abc", "mode": "queue" }
@@ -279,6 +321,7 @@ Agent 调用 DSH 的 `ask_user_question` 工具时，插件通过 API Gateway �
 |---|---|---|
 | `sessions` | — | 会话列表（`updatedAt/running/blank/cwd/agentPreset`） |
 | `history` | `sessionId`, `beforeSeq?`, `maxMessages?`, `maxBytes?`, `view?` | 历史事件页（见下） |
+| `attachment` | `sessionId`, `attachmentId` | 读取历史中属于该会话的图片字节 |
 | `search` | `query` | 会话全文搜索 |
 | `session-stats` | `sessionId` | 执行统计投影（输入框统计条数据源） |
 | `context-usage` | `sessionId` | token 用量 + 上下文占用投影 |
@@ -288,6 +331,7 @@ Agent 调用 DSH 的 `ask_user_question` 工具时，插件通过 API Gateway �
 { "type": "history", "sessionId": "session-abc", "maxMessages": 60, "maxBytes": 4194304, "view": "conversation" }
 ```
 - 返回**原始 SessionEvent**（`{type, seq, time, data}`，方案A），可选裁剪
+- 图片不会内联进历史页。`user/message.data.content[]` 中的图片块为 `{ "type":"image", "attachment": ImageAttachmentRef }`；iOS 使用其中的 `attachmentId` 请求图片数据
 - `maxBytes`：单帧字节预算，默认 **4 MiB**；超预算保留最新部分并给出 `nextBeforeSeq` 续页（客户端 16 MiB 上限的安全余量）
 - `view: "conversation"`：**对话裁剪模式**——丢弃 `assistant/chunk`（token 回放）与 `request/header`（system prompt），`tool/result` 嵌套文本截断到 2000 字符
 - 分页：`hasMore` 为真时用 `beforeSeq: nextBeforeSeq` 请求更早一页
@@ -297,6 +341,48 @@ Agent 调用 DSH 的 `ask_user_question` 工具时，插件通过 API Gateway �
     "bytes": 3521, "view": "conversation", "hasMore": true, "nextBeforeSeq": 128,
     "projections": { "asOfSeq": 127, "values": { "tokenUsage": {...}, "contextPressure": {...}, "permissions": {...}, "sessionStats": {...} } } }
 ```
+
+图片引用结构：
+
+```json
+{
+  "type": "image",
+  "attachment": {
+    "attachmentId": "sha256-opaque-id",
+    "mediaType": "image/jpeg",
+    "bytes": 184320,
+    "width": 1200,
+    "height": 900,
+    "name": "IMG_1024.JPG"
+  }
+}
+```
+
+iOS 发现尚未缓存的 `attachmentId` 后发送：
+
+```json
+{ "type":"attachment", "sessionId":"session-abc", "attachmentId":"sha256-opaque-id" }
+```
+
+服务端在确认该会话历史确实引用了这张图片后返回：
+
+```json
+{
+  "kind": "attachment",
+  "sessionId": "session-abc",
+  "attachment": {
+    "attachmentId": "sha256-opaque-id",
+    "mediaType": "image/jpeg",
+    "bytes": 184320,
+    "width": 1200,
+    "height": 900,
+    "name": "IMG_1024.JPG"
+  },
+  "data": "/9j/4AAQSkZJRgABAQ..."
+}
+```
+
+iOS 用 `Data(base64Encoded:)` 解码并按 `attachment.mediaType` 渲染，建议以 `attachmentId` 为缓存键。不要把 Base64 长期保存在对话模型对象里。并发同步历史时可限制为 2～4 个附件请求，优先加载当前可见消息。
 
 ### `session-stats` 详细（输入框统计条）
 ```json
@@ -423,7 +509,7 @@ Agent 调用 DSH 的 `ask_user_question` 工具时，插件通过 API Gateway �
 | kind | 触发时机 |
 |---|---|
 | `paired` | 首次配对成功；仅此一次返回长期设备 token |
-| `hello` | 连接成功：`{ "kind":"hello", "protocol":2, "authenticated":true, "port":3080, "clients":1 }` |
+| `hello` | 连接成功：`{ "kind":"hello", "protocol":3, "capabilities":["images"], "authenticated":true, "port":3080, "clients":1 }` |
 | `event` | 任意会话的 agent 输出（见下） |
 | `question-requested` / `question-resolved` | Human-in-the-loop 问题请求与最终状态 |
 | `pong` / `subscribed` / `sent` | 对应请求的回复 |
@@ -434,7 +520,7 @@ Agent 调用 DSH 的 `ask_user_question` 工具时，插件通过 API Gateway �
   "event": { "type": "assistant/chunk", "turn": 1, "step": 0, "chunkType": "text-delta", "text": "正在" } }
 ```
 `event.type` 覆盖（精炼字段）：
-- `user/message` → `{text, source}`
+- `user/message` → `{text, source, images?: ImageAttachmentRef[]}`
 - `assistant/chunk` → `{turn, step, chunkType: text-delta|reasoning-delta|tool-call-delta|usage|finish, text?/tool?/usage?/finish?}`
 - `assistant/message` → `{turn, step, text, reasoning, toolCalls[]}`
 - `tool/call` → `{turn, step, callId, name, arguments}`
@@ -487,6 +573,7 @@ Agent 调用 DSH 的 `ask_user_question` 工具时，插件通过 API Gateway �
 | v0.1.17 | models 支持无 sessionId 全局目录；新增 providers |
 | v0.3.0 | 默认设备鉴权；一次性二维码配对；摘要化凭证存储；WebUI 设备面板；在线状态和即时吊销 |
 | v0.5.0 | Human-in-the-loop：转发 API Gateway question 请求、整批回答/取消、重连重放与多端状态收敛 |
+| v0.6.0 | DSH 0.1.1 图片：WebSocket Base64 上传、实时图片引用、历史附件按会话安全读取 |
 
 ---
 
