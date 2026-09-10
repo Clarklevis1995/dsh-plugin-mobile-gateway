@@ -202,6 +202,23 @@ function expectRejected(url, options = {}) {
   })
   assert.equal(insecurePublic.status, 400)
 
+  // Tailscale assigns every tailnet node an address from the RFC 6598 shared
+  // address space (100.64.0.0/10). A ws:// pairing URL on that private overlay
+  // is a LAN-class transport, not a public endpoint, so it must be accepted.
+  const pairOnTailnet = async (publicUrl) => fetch(`${base}/mgw/pair`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: base },
+    body: JSON.stringify({ name: 'Tailnet iPhone', publicUrl }),
+  })
+  const tailnetFirst = await pairOnTailnet('ws://100.64.0.1:3081/ws/mobile')
+  assert.equal(tailnetFirst.status, 201)
+  assert.equal((await tailnetFirst.json()).payload.publicUrl, 'ws://100.64.0.1:3081/ws/mobile')
+  const tailnetLast = await pairOnTailnet('ws://100.127.255.255:3081/ws/mobile')
+  assert.equal(tailnetLast.status, 201)
+  // The boundary just outside 100.64.0.0/10 stays rejected.
+  const outsideCgnat = await pairOnTailnet('ws://100.128.0.1:3081/ws/mobile')
+  assert.equal(outsideCgnat.status, 400)
+
   const pairResponse = await fetch(`${base}/mgw/pair`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Origin: base },
