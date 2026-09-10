@@ -219,6 +219,15 @@ function expectRejected(url, options = {}) {
   const outsideCgnat = await pairOnTailnet('ws://100.128.0.1:3081/ws/mobile')
   assert.equal(outsideCgnat.status, 400)
 
+  // Tailscale MagicDNS names stay valid when a tailnet address changes, so a
+  // ws:// pairing URL on the tailnet's own DNS suffix is a private overlay
+  // transport as well. A lookalike public domain must still be refused.
+  const magicDns = await pairOnTailnet('ws://macbook-pro-14.tail026f6b.ts.net:3081/ws/mobile')
+  assert.equal(magicDns.status, 201)
+  assert.equal((await magicDns.json()).payload.publicUrl, 'ws://macbook-pro-14.tail026f6b.ts.net:3081/ws/mobile')
+  const lookalike = await pairOnTailnet('ws://myhost.ts.net.evil.example:3081/ws/mobile')
+  assert.equal(lookalike.status, 400)
+
   const pairResponse = await fetch(`${base}/mgw/pair`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Origin: base },
