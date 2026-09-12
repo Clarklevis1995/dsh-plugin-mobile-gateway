@@ -112,8 +112,8 @@
 - [x] 提供模型和权限的通用二级选择菜单。
 - [x] 按 Session 列出用户可调用技能。
 - [x] 区分 Model 可调用技能与仅用户技能。
-- [ ] 适配 Alpha1 `commands.execute.submittedAttachments` 参数。
-- [ ] 同时识别 RC1 `input.images` 与 Alpha1 `input.attachments` 命令描述。
+- [x] 适配 Alpha1 `commands.execute.submittedAttachments` 参数。
+- [x] 同时识别 RC1 `input.images` 与 Alpha1 `input.attachments` 命令描述。
 - [ ] 支持向 Host 命令附加普通文件 receipt。
 - [ ] 实时同步 `commands/change`，使移动端命令目录自动刷新。
 

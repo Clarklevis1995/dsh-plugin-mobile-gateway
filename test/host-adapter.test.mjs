@@ -151,4 +151,12 @@ const sessionModels = await host.sessions.models({ sessionId: 's1' })
 assert.deepEqual(sessionModels.current, { provider: 'deepseek', model: 'chat' })
 assert.equal(sessionModels.routable, true)
 
+await host.commands.execute('s1', '/plan-toggle', [{ type: 'image', mediaType: 'image/png', data: 'AA==' }])
+const commandExecuteCall = calls.find((call) => call.namespace === 'commands' && call.method === 'execute')
+assert.deepEqual(commandExecuteCall.args, {
+  agentId: 's1',
+  line: '/plan-toggle',
+  submittedAttachments: [{ type: 'image', mediaType: 'image/png', data: 'AA==' }],
+})
+
 console.log('DSH HOST ADAPTER TESTS PASSED')
