@@ -25,6 +25,51 @@ const assert = await import('node:assert/strict')
   assert.equal(failed.requestId, 'r2')
 }
 
+// Compact v3 history and reject stale/unversioned cursor coordinates before RPC.
+{
+  const stream = [{ type: 'text-chunks', time0: 1, index: 0, dt: [], texts: ['x'.repeat(100_000)] }]
+  let historyCalls = 0
+  let forkCalls = 0
+  const api = { sessions: {
+    history: async () => { historyCalls++; return { historyFormatVersion: 3, cursor: 5, hasMore: true,
+      projections: { asOfSeq: 5, values: {} }, events: [
+        { event: { type: 'system/message', seq: 1, time: 1, data: { message: { content: [{ type: 'text', text: 'private system prompt' }] } } } },
+        { event: { type: 'assistant/message', seq: 2, time: 2, data: { turn: 1, step: 0, interrupted: true, usage: { outputTokens: 3 }, stream,
+          message: { content: [{ type: 'text', text: 'answer' }] } } } },
+        { event: { type: 'assistant/attempt', seq: 3, time: 3, data: { turn: 1, step: 1, stream } } },
+      ] } },
+    fork: async () => { forkCalls++; return { sessionId: 'branch' } },
+  } }
+  const page = await handleQuery(api, null, null, { type: 'history', sessionId: 's1', view: 'conversation' })
+  assert.deepEqual(page.events.map(event => event.type), ['assistant/message', 'assistant/attempt'])
+  assert.ok(page.events.every(event => !('stream' in event.data)))
+  assert.ok(page.bytes < 1000)
+  assert.equal(page.events[0].data.interrupted, true)
+  assert.equal(page.historyFormatVersion, 3)
+  assert.equal(page.cursor, 5)
+  assert.equal(page.nextBeforeSeq, 2)
+  const raw = await handleQuery(api, null, null, { type: 'history', sessionId: 's1' })
+  assert.equal(raw.events[2].data.stream[0].texts[0].length, 100_000)
+  for (const historyFormatVersion of [undefined, 1, 2]) {
+    const error = await handleQuery(api, null, null, { type: 'history', sessionId: 's1', beforeSeq: 2, historyFormatVersion })
+    assert.equal(error.code, 'history-format-mismatch')
+    assert.equal(error.resetRequired, true)
+    const forkError = await handleQuery(api, null, null, { type: 'fork', sessionId: 's1', atSeq: 2, historyFormatVersion })
+    assert.equal(forkError.code, 'history-format-mismatch')
+  }
+  assert.equal(historyCalls, 2)
+  assert.equal(forkCalls, 0)
+  await handleQuery(api, null, null, { type: 'history', sessionId: 's1', beforeSeq: 2, historyFormatVersion: 3 })
+  await handleQuery(api, null, null, { type: 'fork', sessionId: 's1', atSeq: 2, historyFormatVersion: 3 })
+  assert.equal(historyCalls, 3)
+  assert.equal(forkCalls, 1)
+  assert.equal((await handleQuery(api, null, null, { type: 'fork', sessionId: 's1', atSeq: 2.5, historyFormatVersion: 3 })).code, 'bad-request')
+  api.sessions.history = async () => ({ hasMore: true, events: [{ event: { type: 'system/message', seq: 10, data: {} } }] })
+  const hidden = await handleQuery(api, null, null, { type: 'history', sessionId: 's1', view: 'conversation' })
+  assert.deepEqual(hidden.events, [])
+  assert.equal(hidden.nextBeforeSeq, 10)
+}
+
 const directoryTestRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-mobile-directory-'))
 const fileDownloadRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-mobile-files-'))
 const fileDownloadDir = path.join(fileDownloadRoot, 'builds')
@@ -182,6 +227,7 @@ ctx.webServer = webServer
 const invokeCalls = []
 const controlFrames = []
 const workspaceFrames = []
+const liveFollows = new Map()
 const savedSelections = []
 ctx.agentDefaultModel = {
   currentSelection() { return { provider: 'deepseek', model: 'deepseek-chat', reasoningEffort: 'high' } },
@@ -194,7 +240,7 @@ ctx.typertGateway = {
       return [
         { name: 'compact', description: 'Compact older conversation history' },
         { name: 'permission', description: 'Switch the permission preset', input: { hint: '<preset>' } },
-        { name: 'plan', description: 'Enter or leave plan mode', input: { hint: '[off|message]', images: true } },
+        { name: 'plan', description: 'Enter or leave plan mode', input: { hint: '[off|message]', attachments: true } },
       ]
     }
     if (req.namespace === 'commands' && req.args && req.args.line === '/permission missing') {
@@ -262,11 +308,24 @@ ctx.typertGateway = {
         }
       })()
     }
+    if (req.namespace === 'session' && req.method === 'follow' && req.args.request.assistantStream === true) {
+      const sessionId = req.args.request.address.sessionId
+      const state = liveFollows.get(sessionId)
+      assert.ok(state, 'test requires a live follow fixture')
+      state.signals.push(req.signal)
+      return (async function* () {
+        yield structuredClone(state.snapshot)
+        while (!req.signal.aborted) {
+          if (state.frames.length) yield state.frames.shift()
+          else await new Promise(resolve => setTimeout(resolve, 5))
+        }
+      })()
+    }
     if (req.namespace === 'session' && req.method === 'follow') {
       const value = (await api.sessions.history()).result.value
       const records = value.events.map((entry) => ({ type: 'event', event: entry.event }))
       return (async function* () {
-        yield { type: 'snapshot', header: { version: 1, id: req.args.request.address.sessionId }, cursor: 91, records, hasMore: value.hasMore, projections: value.projections }
+        yield { type: 'snapshot', header: { version: 3, id: req.args.request.address.sessionId }, cursor: 91, records, hasMore: value.hasMore, projections: value.projections }
       })()
     }
     if (req.namespace === 'session' && req.method === 'control') {
@@ -309,6 +368,74 @@ function waitFor(pred, timeout) { return new Promise((res) => { const t0 = Date.
   await waitFor(() => got.length > 0, 2000)
 
   const interactionResults = []
+  listeners['session/event']({ id: 's1' }, { type: 'tool/result', seq: 9000, time: 1, data: {
+    turn: 1, step: 0, message: { source: { callId: 'failed-call' }, content: [{ type: 'tool-result', isError: true, content: [{ type: 'text', text: 'failed' }] }] },
+  } })
+  listeners['session/event']({ id: 's1' }, { type: 'assistant/attempt', seq: 9001, time: 2, data: {
+    turn: 1, step: 0, stream: [{ type: 'chunk', time: 1, chunk: { type: 'finish', reason: { kind: 'error' } } }],
+  } })
+  assert.equal(await waitFor(() => got.some(frame => frame.seq === 9001), 2000), true)
+  assert.equal(got.find(frame => frame.seq === 9000).event.isError, true)
+  assert.equal(got.find(frame => frame.seq === 9001).event.stream[0].type, 'chunk')
+  interactionResults.push(['v3 failed tool and attempt payloads', true])
+
+  // rc.2 follow: authoritative snapshot, independent token identity, real settlement.
+  {
+    const state = { signals: [], frames: [], snapshot: {
+      type: 'snapshot', header: { version: 3, id: 'live-1' }, cursor: 41,
+      records: [], hasMore: false, projections: { asOfSeq: 41, values: {} }, assistantStream: { revision: 0 },
+    } }
+    liveFollows.set('live-1', state)
+    const socket = new WebSocket(`ws://127.0.0.1:${webServer.port}/ws/mobile`, { headers: { 'X-DSH-Channel': 'conversation' } })
+    const frames = []
+    socket.on('message', data => frames.push(JSON.parse(data.toString())))
+    await new Promise(resolve => socket.once('open', resolve))
+    try {
+      socket.send(JSON.stringify({ type: 'subscribe', sessionId: 'live-1', assistantStream: true }))
+      assert.equal(await waitFor(() => frames.some(frame => frame.kind === 'session-snapshot'), 2000), true)
+      const baseline = frames.find(frame => frame.kind === 'session-snapshot')
+      assert.equal(baseline.historyFormatVersion, 3)
+      assert.equal(baseline.cursor, 41)
+      assert.equal(baseline.replace, true)
+      state.frames.push({ type: 'assistant-stream', frame: { type: 'start', attemptId: 'a1', revision: 1, startedAfterSeq: 41, turn: 2, step: 3 } })
+      for (const [index, text] of ['Hello', ' world'].entries()) state.frames.push({ type: 'assistant-stream', frame: {
+        type: 'chunk', attemptId: 'a1', revision: index + 2, index, time: 100 + index, chunk: { type: 'text-delta', index: 0, text },
+      } })
+      const finalEvent = { type: 'assistant/message', seq: 42, time: 102,
+        surfaceOp: 'append', data: { turn: 2, step: 3, interrupted: true, usage: { outputTokens: 2 },
+          message: { content: [{ type: 'text', text: 'Hello world' }] } } }
+      state.frames.push({ type: 'event', event: finalEvent }, { type: 'assistant-stream', frame: {
+        type: 'end', attemptId: 'a1', revision: 4, index: 2, outcome: { kind: 'committed', eventType: 'assistant/message', seq: 42 },
+      } })
+      listeners['session/event']({ id: 'live-1' }, finalEvent)
+      assert.equal(await waitFor(() => frames.some(frame => frame.frame?.type === 'end'), 2000), true)
+      const chunks = frames.filter(frame => frame.frame?.type === 'chunk')
+      assert.equal(chunks.length, 2)
+      assert.ok(chunks.every(frame => !('seq' in frame) && !('seq' in frame.frame) && frame.frame.turn === 2 && frame.frame.step === 3))
+      assert.equal(frames.filter(frame => frame.kind === 'event').length, 1)
+      assert.equal(frames.find(frame => frame.kind === 'event').event.interrupted, true)
+      assert.equal(frames.find(frame => frame.kind === 'event').event.usage.outputTokens, 2)
+      assert.equal(frames.find(frame => frame.kind === 'event').surfaceOp, 'append')
+      socket.send(JSON.stringify({ type: 'unsubscribe' }))
+      assert.equal(await waitFor(() => state.signals[0].aborted, 2000), true)
+      interactionResults.push(['rc2 ordered follow and independent chunks', true])
+    } finally { socket.terminate() }
+
+    // A new connection joining mid-generation receives the entire active prefix.
+    state.snapshot.assistantStream = { revision: 2, activeAttempt: { attemptId: 'a1', turn: 2, step: 3,
+      startedAfterSeq: 41, nextIndex: 1, stream: [{ type: 'text-chunks', time0: 100, index: 0, dt: [], texts: ['Hello'] }] } }
+    const reconnect = new WebSocket(`ws://127.0.0.1:${webServer.port}/ws/mobile`, { headers: { 'X-DSH-Channel': 'conversation' } })
+    const restored = []
+    reconnect.on('message', data => restored.push(JSON.parse(data.toString())))
+    await new Promise(resolve => reconnect.once('open', resolve))
+    reconnect.send(JSON.stringify({ type: 'subscribe', sessionId: 'live-1', assistantStream: true }))
+    assert.equal(await waitFor(() => restored.some(frame => frame.kind === 'session-snapshot'), 2000), true)
+    assert.equal(restored.find(frame => frame.kind === 'session-snapshot').assistantStream.activeAttempt.stream[0].texts[0], 'Hello')
+    reconnect.terminate()
+    assert.equal(await waitFor(() => state.signals.at(-1).aborted, 2000), true)
+    interactionResults.push(['rc2 reconnect restores prefix and disconnect cancels follow', true])
+  }
+
   // 两条真实 WebSocket：暂停对话接收后，控制连接仍能读取文件并管理会话。
   {
     const control = new WebSocket(`ws://127.0.0.1:${webServer.port}/ws/mobile`, { headers: { 'X-DSH-Channel': 'control' } })
@@ -328,7 +455,7 @@ function waitFor(pred, timeout) { return new Promise((res) => { const t0 = Date.
       assert.equal(conversations.some(f => f.kind === 'session-title-changed' || f.kind === 'session-archives'), false)
       conversation.pause()
       for (let seq = 7002; seq < 7258; seq++) {
-        listeners['session/event']({ id: 's1' }, { type: 'assistant/chunk', seq, time: Date.now(), data: { text: 'x'.repeat(4096), chunkType: 'text-delta', turn: 1, step: 1 } })
+        listeners['session/event']({ id: 's1' }, { type: 'assistant/message', seq, time: Date.now(), data: { message: { content: [{ type: 'text', text: 'x'.repeat(4096) }] }, turn: 1, step: 1 } })
       }
       control.send(JSON.stringify({ type: 'file-list', requestId: 'split-files', sessionId: 's1' }))
       assert.equal(await waitFor(() => controls.some(f => f.kind === 'file-list' && f.requestId === 'split-files'), 2000), true)
@@ -478,6 +605,12 @@ function waitFor(pred, timeout) { return new Promise((res) => { const t0 = Date.
   interactionResults.push(['live goal projection', goalUpdated && got.find((m) => m.kind === 'goal-updated' && m.asOfSeq === 94).goal.goal.phase === 'paused'])
   interactionResults.push(['live session queue update', queueUpdated])
 
+  controlFrames.push({ type: 'baseline', value: { queues: {}, jobs: {}, projections: {
+    s1: { asOfSeq: 94, values: { todos: [], goal: null } },
+  } } })
+  assert.equal(await waitFor(() => got.some(frame => frame.kind === 'projection-baseline' && frame.projections.s1?.values.goal === null), 2000), true)
+  assert.equal(await waitFor(() => got.some(frame => frame.kind === 'goal-updated' && frame.goal === null && frame.asOfSeq === 94), 2000), true)
+  interactionResults.push(['control reconnect restores projection baseline', true])
   workspaceFrames.push({ type: 'archived', archivedSessionIds: ['s1'] })
   const archivesUpdated = await waitFor(() => got.some((m) => m.kind === 'session-archives' && m.archivedSessionIds.includes('s1')), 2000)
   interactionResults.push(['live session archive state', archivesUpdated])
@@ -668,7 +801,7 @@ function waitFor(pred, timeout) { return new Promise((res) => { const t0 = Date.
     ['default-model', { type: 'default-model' }, (m) => m.kind === 'default-model' && m.selection.provider === 'deepseek' && m.selection.model === 'deepseek-chat' && m.selection.reasoningEffort === 'high'],
     ['save-default-model', { type: 'save-default-model', provider: 'deepseek', model: 'deepseek-reasoner', reasoningEffort: 'medium' }, (m) => m.kind === 'save-default-model' && m.saved.provider === 'deepseek' && m.saved.model === 'deepseek-reasoner' && m.saved.reasoningEffort === 'medium' && savedSelections.length === 1 && savedSelections[0].reasoningEffort === 'medium'],
     ['save-default-model missing fields', { type: 'save-default-model', provider: 'deepseek' }, (m) => m.kind === 'error' && m.code === 'bad-request'],
-    ['fork', { type: 'fork', sessionId: 's1', atSeq: 42 }, (m) => m.kind === 'fork' && m.sessionId === 's-branch-1'],
+    ['fork', { type: 'fork', sessionId: 's1', atSeq: 42, historyFormatVersion: 3 }, (m) => m.kind === 'fork' && m.sessionId === 's-branch-1'],
     ['fork missing sessionId', { type: 'fork' }, (m) => m.kind === 'error' && m.code === 'bad-request'],
     ['session cancel', { type: 'session-cancel', sessionId: 's1' }, (m) => m.kind === 'session-cancelled' && m.sessionId === 's1' && m.accepted === true && api.cancelCalls.some((call) => call.sessionId === 's1')],
     ['session cancel missing sessionId', { type: 'session-cancel' }, (m) => m.kind === 'error' && m.code === 'bad-request' && m.requestType === 'session-cancel'],

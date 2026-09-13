@@ -6,17 +6,22 @@
 
 DeepSeek Harness 的设备鉴权移动网关，支持会话与实时事件、排队消息同步及编辑/删除/Steer、Session 归档和重命名的双向同步、停止当前生成并稍后继续、任务列表和当前 Goal 同步及管理、服务端驱动的命令和技能菜单、Human-in-the-loop、图片及文件传输。安装后，Harness WebUI 左侧边栏会出现“移动设备”入口，可直接开启网关、生成配对二维码和管理可信设备。
 
+> 当前源码以 **DSH 0.1.5-rc.2** 为唯一适配基线，使用 Session format 3；不再兼容更早的 Host 版本。
+>
+> 实时流已改为独立 `assistant-stream` 帧，移动端需要按 [rc.2 接入说明](docs/dsh-rc2-mobile-integration.md) 更新订阅、缓存与分页处理。当前修改尚未发布。
+>
 > v0.7.3：优化移动网关运行模式下拉框的箭头间距。
 >
-> v0.7.2：新增独立对话/控制连接、空 Session 创建、停止生成与稍后继续、排队消息同步及编辑/删除/Steer，以及 Session 归档和重命名的双向同步；兼容 DSH v0.1.2-rc.1 与 v0.1.3-alpha.1。
+> v0.7.2：新增独立对话/控制连接、空 Session 创建、停止生成与稍后继续、排队消息同步及编辑/删除/Steer，以及 Session 归档和重命名的双向同步。
 
 ## 协议与 DSH 兼容层
 
-移动端连接的是本项目维护的 `dsh-mobile-v1`，不是 DSH 的内部 Remote 协议。插件内部通过独立 Host Adapter 对接 DSH v0.1.2-rc.1 的 Remote Gateway；Session、Workspace、Settings、Commands、Goals 等 namespace 和严格参数只存在于该适配层。
+移动端连接的是本项目维护的 `dsh-mobile-v1`，不是 DSH 的内部 Remote 协议。插件内部通过独立 Host Adapter 对接 DSH 0.1.5-rc.2 的 Remote Gateway；Session、Workspace、Settings、Commands、Goals 等 namespace 和严格参数只存在于该适配层。
 
-因此本次从旧 APIProxy 迁移到 Remote Gateway 不要求现有移动端修改：WebSocket 子协议、`hello.protocol = 3`、配对鉴权和已有请求/响应字段保持不变。以后 DSH 调整 Remote API 时，优先只更新插件适配层及契约测试；只有移动协议本身发生不可兼容变化时，才会新增并并行支持新的移动端协议版本。
+配对鉴权和 `dsh-mobile-v1` / `hello.protocol = 3` 保持不变。新版实时 token 不占用持久事件的 `seq`：客户端显式订阅 `assistantStream: true`，接收原子的 `session-snapshot` 和独立增量；普通 `event` 只携带持久事件。未接入新订阅的客户端只能收到持久消息。
 
-详细实施边界见 [Remote Gateway 重构实施计划](docs/remote-gateway-refactor-plan.md)。
+历史响应包含 `historyFormatVersion` 和 `cursor`。客户端格式变化时应清理历史缓存、重新安装基线；携带 `beforeSeq` 的分页或携带 `atSeq` 的 fork 必须同时发送 `historyFormatVersion: 3`。
+当前协议接入与验收见 [rc.2 移动端接入说明](docs/dsh-rc2-mobile-integration.md)；早期迁移记录见 [Remote Gateway 重构实施计划](docs/remote-gateway-refactor-plan.md)。
 
 - WebSocket：`/ws/mobile`
 - 局域网：`ws://<局域网 IP>:3081/ws/mobile`

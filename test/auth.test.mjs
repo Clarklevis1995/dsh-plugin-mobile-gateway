@@ -238,6 +238,9 @@ function expectRejected(url, options = {}) {
   assert.equal(hello.protocol, 3)
   assert.deepEqual(hello.capabilities, [
     'split-channels',
+    'assistant-stream-v1',
+    'history-format-version',
+    'projection-baseline',
     'images',
     'session-create',
     'commands',

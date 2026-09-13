@@ -10,14 +10,11 @@
 
 ## 版本基线与兼容性
 
-- [x] 支持 DSH `0.1.2-rc.1` 的 Typert Remote 基础契约。
+- [x] 以 DSH `0.1.5-rc.2` / Session format 3 为唯一适配基线，不提供旧 Host 分支。
 - [x] 使用独立 Host Adapter 隔离 DSH Remote namespace、method 和严格参数名。
-- [x] 保持移动端 `dsh-mobile-v1`、`hello.protocol = 3` 和现有字段兼容。
-- [ ] 支持 DSH `0.1.3-alpha.1` 的 Typert Remote 契约。
-- [ ] 同时兼容 `0.1.2-rc.1` 与 `0.1.3-alpha.1`，不要求移动端同步升级。
-- [ ] 增加 Host Remote 能力探测并在进程生命周期内缓存探测结果。
-- [ ] 为 `0.1.3-alpha.1` 建立独立的 fake gateway 契约测试。
-- [ ] 建立 RC1 与 Alpha1 双版本回归测试矩阵。
+- [x] 保留移动配对和 `dsh-mobile-v1`、`hello.protocol = 3`；新增独立实时流需移动端接入。
+- [x] rc.2 输入契约、流状态机和真实 WebSocket mock Host 回归测试。
+- [ ] rc.2 真实 Host 与移动 App 完整联调。
 
 ## 连接、鉴权与通用传输
 
@@ -67,16 +64,17 @@
 
 ## 实时会话流与状态同步
 
-- [x] 在 `0.1.2-rc.1` 上通过 Host `session/event` 转发实时 SessionEvent。
+- [x] 通过 Host `session/event` 向未启用 follow 的连接转发持久 SessionEvent。
 - [x] 转发 `todos` projection 的增量更新。
 - [x] 转发 `goal` projection 的增量更新。
 - [x] 将 WebUI 或其他客户端写入的 `session/title` 变化实时通知移动端。
 - [x] 将 Workspace 归档集合变化实时通知移动端。
-- [ ] 在 `0.1.3-alpha.1` 上使用 `session.follow({ assistantStream: true })` 接收实时 Assistant 流。
-- [ ] 将 `assistant-stream` 的 start/chunk/end 帧转换为现有移动端实时事件。
-- [ ] 处理 Assistant Stream reconnect baseline、revision、index 和 settlement。
-- [ ] 使用 `session.follow` 持续接收 durable event，而不只读取 opening snapshot。
-- [ ] 在断线重连或序号出现缺口时自动补齐 Session 历史。
+- [x] 在 `0.1.5-rc.2` 上使用 `session.follow({ assistantStream: true })` 接收实时 Assistant 流。
+- [x] 将 `assistant-stream` 的 start/chunk/end 转发为独立移动帧，并从 start/基线补齐 turn/step。
+- [x] 处理 Assistant Stream reconnect baseline、revision、index 和 settlement。
+- [x] 使用 `session.follow` 持续接收 durable event，而不只读取 opening snapshot。
+- [x] 上游断流或序号出现缺口时重建 Session 快照；移动连接重建后重新订阅恢复。
+- [x] 安装并向控制连接重放 todos/goal projection baseline。
 - [x] 处理 `session.control` baseline 中的 queues，并在重连时整体替换。
 - [ ] 处理 `session.control` baseline 中的 jobs。
 - [ ] 处理 `session.control` baseline 中除 `todos`、`goal` 外的 projections。
@@ -93,27 +91,27 @@
 
 - [x] 读取 Session opening snapshot。
 - [x] 分页读取更早的历史记录。
-- [x] 展开 RC1 `chunkrow/text-chunks` 历史记录。
-- [x] 展开 RC1 `chunkrow/reasoning-chunks` 历史记录。
-- [x] 展开 RC1 `chunkrow/tool-call-chunks` 历史记录。
+- [x] 读取 format 3 event 记录，保留真实 seq 与内嵌 stream，不展开为虚构序号。
+- [x] 输出历史格式/cursor；拒绝缺失或不匹配版本的分页/fork 游标。
 - [x] 支持移动端历史帧字节预算。
 - [x] 支持 conversation 裁剪视图。
 - [x] 读取历史图片附件字节。
 - [x] 查询 Session 统计信息。
 - [x] 查询 Token Usage 与 Context Pressure。
-- [ ] 完整适配 Alpha1 的 Assistant attempt 与 compact stream 历史展示。
+- [x] 原始历史和实时事件保留 Assistant attempt，conversation 历史移除内嵌 stream。
+- [ ] 移动端完成独立 Assistant 流及 attempt 明细展示。
 
 ## Host 命令与技能
 
 - [x] 按 Session 列出 Host 命令。
-- [x] 执行 `0.1.2-rc.1` Host 命令。
+- [x] 执行 `0.1.5-rc.2` Host 命令。
 - [x] 转发 `command/run` 与 `command/done` 生命周期事件。
 - [x] 提供服务端驱动的命令菜单 UI 描述。
 - [x] 提供模型和权限的通用二级选择菜单。
 - [x] 按 Session 列出用户可调用技能。
 - [x] 区分 Model 可调用技能与仅用户技能。
-- [x] 适配 Alpha1 `commands.execute.submittedAttachments` 参数。
-- [x] 同时识别 RC1 `input.images` 与 Alpha1 `input.attachments` 命令描述。
+- [x] 适配 rc.2 `commands.execute.submittedAttachments` 参数。
+- [x] 识别 rc.2 `input.attachments` 命令描述。
 - [ ] 支持向 Host 命令附加普通文件 receipt。
 - [ ] 实时同步 `commands/change`，使移动端命令目录自动刷新。
 
@@ -290,7 +288,7 @@
 - [ ] Host Adapter 已封装对应 Remote 调用或流，不在业务层散落 namespace/method。
 - [ ] 移动端协议请求、响应和错误形态已经定义。
 - [ ] 对应单元测试或网关端到端测试通过。
-- [ ] RC1/Alpha1 相关兼容测试通过，或明确声明该功能只在指定 Host 版本启用。
+- [ ] DSH 0.1.5-rc.2 相关契约和行为测试通过。
 - [ ] `PROTOCOL.md` 与 README 中面向用户的能力说明已经同步。
 
 > 本节是每个新功能的验收模板，不表示当前所有待实现功能已经满足这些条件，因此保持未勾选。

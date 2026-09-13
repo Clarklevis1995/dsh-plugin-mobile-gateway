@@ -1,6 +1,6 @@
 # dsh Mobile Gateway — WebSocket 协议参考
 
-移动端通过经过设备鉴权的 WebSocket 连接与 dsh 通信：订阅 agent 实时输出、发送文字和图片、处理 Human-in-the-loop 提问与操作审批、查询会话/工作区/历史、调整会话配置。本协议由持久化插件 `dsh-plugin-mobile-gateway` 实现（v0.7.2）。
+移动端通过经过设备鉴权的 WebSocket 连接与 dsh 通信：订阅 agent 实时输出、发送文字和图片、处理 Human-in-the-loop 提问与操作审批、查询会话/工作区/历史、调整会话配置。本协议由持久化插件 `dsh-plugin-mobile-gateway` 实现。当前源码仅适配 DSH 0.1.5-rc.2 / Session format 3，移动端接入变更见 [rc.2 接入说明](docs/dsh-rc2-mobile-integration.md)。
 
 - **本机端点**：`ws://127.0.0.1:3080/ws/mobile`（与 dsh web GUI 同端口）
 - **局域网端点**：`ws://<电脑的私有局域网 IP>:3081/ws/mobile`（插件独立监听，只提供经过鉴权的 WebSocket）
@@ -160,7 +160,7 @@ func connectAuthenticated(publicURL: URL, token: String) -> URLSessionWebSocketT
 | type | 参数 | 说明 |
 |---|---|---|
 | `ping` | — | 心跳；回复 `pong` |
-| `subscribe` | `sessionId` | 事件流过滤：之后只收到该会话的 `event`，并重放该会话仍待处理的提问与审批（不订阅 = 接收所有会话） |
+| `subscribe` | `sessionId`, `assistantStream?` | 事件流过滤；`assistantStream: true` 启用独立实时流及原子基线（见 [rc.2 接入说明](docs/dsh-rc2-mobile-integration.md)），并重放该会话仍待处理的提问与审批（不订阅 = 接收所有会话） |
 | `unsubscribe` | — | 取消过滤 |
 
 ```json
@@ -628,7 +628,7 @@ let image = [
 | `sessions` | — | 会话列表（`updatedAt/running/blank/cwd/agentPreset`） |
 | `session-archive` | `sessionId` | 将 Session 加入 Host 的完整归档集合（隐藏但不删除） |
 | `session-rename` | `sessionId`, `title` | 写入用户指定的持久化 Session 名称 |
-| `history` | `sessionId`, `beforeSeq?`, `maxMessages?`, `maxBytes?`, `view?` | 历史事件页（见下） |
+| `history` | `sessionId`, `beforeSeq?`, `historyFormatVersion?`, `maxMessages?`, `maxBytes?`, `view?` | 历史事件页（见下） |
 | `attachment` | `sessionId`, `attachmentId` | 读取历史中属于该会话的图片字节 |
 | `file-list` | `sessionId`, `path?`, `requestId?` | 列出会话工作目录内的一层文件与文件夹 |
 | `file-download-open` | `sessionId`, `path`, `requestId` | 打开一个工作目录内的普通文件下载 |
@@ -682,13 +682,14 @@ WebUI、App 或其他客户端造成的变化通过以下帧主动推送：
 - 返回**原始 SessionEvent**（`{type, seq, time, data}`，方案A），可选裁剪
 - 图片不会内联进历史页。`user/message.data.content[]` 中的图片块为 `{ "type":"image", "attachment": ImageAttachmentRef }`；iOS 使用其中的 `attachmentId` 请求图片数据
 - `maxBytes`：单帧字节预算，默认 **4 MiB**；超预算保留最新部分并给出 `nextBeforeSeq` 续页（客户端 16 MiB 上限的安全余量）
-- `view: "conversation"`：**对话裁剪模式**——丢弃 `assistant/chunk`（token 回放）与 `request/header`（system prompt），`tool/result` 嵌套文本截断到 2000 字符
-- 分页：`hasMore` 为真时用 `beforeSeq: nextBeforeSeq` 请求更早一页
+- `view: "conversation"`：**对话裁剪模式**——隐藏系统消息与 request/header、request/context，移除 Assistant 事件的内嵌 `data.stream`，`tool/result` 嵌套文本截断到 2000 字符
+- 分页：`hasMore` 为真时用 `beforeSeq: nextBeforeSeq, historyFormatVersion: 3` 请求更早一页
 
 ```json
 → { "kind": "history", "sessionId": "session-abc", "events": [ ...原始事件... ],
+    "historyFormatVersion": 3, "cursor": 200,
     "bytes": 3521, "view": "conversation", "hasMore": true, "nextBeforeSeq": 128,
-    "projections": { "asOfSeq": 127, "values": { "tokenUsage": {...}, "contextPressure": {...}, "permissions": {...}, "sessionStats": {...} } } }
+    "projections": { "asOfSeq": 200, "values": { "tokenUsage": {...}, "contextPressure": {...}, "permissions": {...}, "sessionStats": {...} } } }
 ```
 
 图片引用结构：
@@ -971,7 +972,7 @@ WebUI 中的“任务”与“进行中的目标”分别对应 DSH 的 `todos` 
 ## 11. 分支（fork）
 
 ```json
-{ "type": "fork", "sessionId": "session-abc", "atSeq": 42 }
+{ "type": "fork", "sessionId": "session-abc", "atSeq": 42, "historyFormatVersion": 3 }
 → { "kind": "fork", "sessionId": "session-分支新会话" }
 ```
 - `atSeq`：从该消息所在的**完整一轮**分叉（省略 = 最近完成的 turn）；进行中的 turn 分叉会报 `fork-unavailable`
@@ -1011,12 +1012,13 @@ WebUI 中的“任务”与“进行中的目标”分别对应 DSH 的 `todos` 
 ### `event` 帧（agent 实时输出）
 ```json
 { "kind": "event", "sessionId": "session-abc", "seq": 42, "time": 1786937352,
-  "event": { "type": "assistant/chunk", "turn": 1, "step": 0, "chunkType": "text-delta", "text": "正在" } }
+  "event": { "type": "assistant/message", "turn": 1, "step": 0, "text": "已完成", "reasoning": "", "toolCalls": [] } }
 ```
 `event.type` 覆盖（精炼字段）：
 - `user/message` → `{text, source, images?: ImageAttachmentRef[]}`
-- `assistant/chunk` → `{turn, step, chunkType: text-delta|reasoning-delta|tool-call-delta|usage|finish, text?/tool?/usage?/finish?}`
-- `assistant/message` → `{turn, step, text, reasoning, toolCalls[]}`
+- 实时 token 使用独立 `assistant-stream`，不是带持久 seq 的 `assistant/chunk`；详见 [rc.2 接入说明](docs/dsh-rc2-mobile-integration.md)。
+- `assistant/attempt` → `{turn, step, stream[]}`
+- `assistant/message` → `{turn, step, text, reasoning, toolCalls[], interrupted?, usage?}`
 - `session/title` → `{title, source?}`
 - `tool/call` → `{turn, step, callId, name, arguments}`
 - `tool/result` → `{turn, step, callId, isError, preview(≤400字符)}`
@@ -1028,10 +1030,10 @@ WebUI 中的“任务”与“进行中的目标”分别对应 DSH 的 `todos` 
 
 1. Connect → 收到 `hello`
 2. `{"type":"sessions"}` → 挑 `sessionId`（或直接下一步自动建）
-3. `{"type":"subscribe","sessionId":"session-abc"}`
+3. `{"type":"subscribe","sessionId":"session-abc","assistantStream":true}`，等待 `session-snapshot`
 4. `{"type":"message","sessionId":"session-abc","text":"帮我查一下deepseek"}` → `sent`
-5. 盯着 Messages 面板：`event` 流实时滚动（chunk → tool/call → tool/result → assistant/message）
-6. `{"type":"history","sessionId":"session-abc","view":"conversation","maxMessages":60}` → 最近历史（自动分页用 `beforeSeq: nextBeforeSeq`）
+5. 盯着 Messages 面板：独立 `assistant-stream` 展示 token，`event` 流提供已提交的消息和工具事件
+6. `{"type":"history","sessionId":"session-abc","view":"conversation","maxMessages":60}` → 最近历史（自动分页用 `beforeSeq: nextBeforeSeq, historyFormatVersion: 3`）
 7. `{"type":"session-stats","sessionId":"session-abc"}` → 统计条数据
 8. 完事 `{"type":"unsubscribe"}` 或 Disconnect
 

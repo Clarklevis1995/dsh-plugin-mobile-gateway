@@ -1,24 +1,21 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
-import { createDshHostAdapter, expandHistoryRecords } from '../lib/dsh-host-adapter.mjs'
+import { createDshHostAdapter, readHistoryRecords } from '../lib/dsh-host-adapter.mjs'
 
 const gatewaySource = fs.readFileSync(new URL('../lib/index.mjs', import.meta.url), 'utf8')
 assert.doesNotMatch(gatewaySource, /apiProxy|api\.events\.mux|api\.respond\s*\(/)
 assert.doesNotMatch(gatewaySource, /typertGateway\.invoke|typertGateway\.stream/)
 
 const packed = {
-  type: 'chunks',
+  type: 'event',
   event: {
-    type: 'chunkrow/text-chunks',
-    seq: 5,
-    time: 100,
-    data: { turn: 2, step: 1, index: 0, texts: ['你', '好'], dt: [7] },
+    type: 'assistant/message', seq: 5, time: 107,
+    data: { turn: 2, step: 1, message: { content: [{ type: 'text', text: '你好' }] },
+      stream: [{ type: 'text-chunks', time0: 100, index: 0, texts: ['你', '好'], dt: [7] }] },
   },
 }
-assert.deepEqual(expandHistoryRecords([packed]), [
-  { type: 'assistant/chunk', seq: 5, time: 100, data: { turn: 2, step: 1, chunk: { type: 'text-delta', index: 0, text: '你' } } },
-  { type: 'assistant/chunk', seq: 6, time: 107, data: { turn: 2, step: 1, chunk: { type: 'text-delta', index: 0, text: '好' } } },
-])
+assert.deepEqual(readHistoryRecords([packed]), [packed.event])
+assert.throws(() => readHistoryRecords([{ type: 'chunks', event: packed.event }]), /requires event records/)
 
 const calls = []
 const gateway = {
@@ -54,7 +51,7 @@ const gateway = {
       return (async function* () {
         yield {
           type: 'snapshot',
-          header: { version: 1, id: 's1' },
+          header: { version: 3, id: 's1' },
           cursor: 9,
           records: [packed],
           hasMore: true,
@@ -73,8 +70,10 @@ const sessionListCall = calls.find((call) => call.namespace === 'session' && cal
 assert.deepEqual(sessionListCall.args, { _request: {} })
 
 const history = await host.sessions.history({ sessionId: 's1' })
-assert.equal(history.events.length, 2)
-assert.equal(history.events[1].event.seq, 6)
+assert.equal(history.events.length, 1)
+assert.equal(history.events[0].event.seq, 5)
+assert.equal(history.historyFormatVersion, 3)
+assert.equal(history.cursor, 9)
 assert.equal(history.projections.asOfSeq, 9)
 
 const older = await host.sessions.history({ sessionId: 's1', beforeSeq: 5, maxMessages: 20 })
@@ -160,3 +159,35 @@ assert.deepEqual(commandExecuteCall.args, {
 })
 
 console.log('DSH HOST ADAPTER TESTS PASSED')
+
+const followAbort = new AbortController()
+await host.openSessionStream('s1', followAbort.signal)
+assert.deepEqual(calls.at(-1), { namespace: 'session', method: 'follow',
+  args: { request: { address: { kind: 'session', sessionId: 's1' }, assistantStream: true } }, signal: followAbort.signal })
+followAbort.abort()
+const badHost = createDshHostAdapter({ invoke: async () => ({}), stream: async () => (async function* () {
+  yield { type: 'snapshot', header: { id: 's1', version: 2 }, cursor: 0, records: [], projections: {} }
+})() })
+await assert.rejects(() => badHost.sessions.history({ sessionId: 's1' }), { code: 'unsupported-session-format' })
+
+// Reading a snapshot must release its follow even with a caller-owned signal.
+{
+  const caller = new AbortController()
+  let returned = false
+  const snapshotHost = createDshHostAdapter({
+    invoke: async () => ({}),
+    stream: async call => ({
+      [Symbol.asyncIterator]() { return this },
+      async next() { return { done: false, value: { type: 'snapshot', header: { id: 's1', version: 3 },
+        cursor: -1, records: [], projections: { asOfSeq: -1, values: {} } } } },
+      async return() {
+        assert.equal(call.signal.aborted, true)
+        returned = true
+        return { done: true }
+      },
+    }),
+  })
+  await snapshotHost.sessions.history({ sessionId: 's1' }, caller.signal)
+  assert.equal(returned, true)
+  assert.equal(caller.signal.aborted, false)
+}
