@@ -174,7 +174,7 @@ function fakeApi() {
             ok: true,
             value: {
               items: [
-                { sessionId: 's1', cwd: fileDownloadRoot, updatedAt: 1, running: false, blank: false },
+                { sessionId: 's1', cwd: fileDownloadRoot, updatedAt: 1, running: false, blank: false, projections: { values: { turnOutline: [{ response: '鼓掌 ' + String.fromCharCode(0xd83d) + '…', prompt: '👏' }] } } },
                 { sessionId: 's2', cwd: fileDownloadRoot, updatedAt: 2, running: false, blank: false },
               ],
             },
@@ -789,7 +789,7 @@ function waitFor(pred, timeout) { return new Promise((res) => { const t0 = Date.
   const deepseekChatOptionId = Buffer.from(JSON.stringify(['deepseek', 'deepseek-chat']), 'utf8').toString('base64url')
   const cases = [
     ['workspaces', { type: 'workspaces' }, (m) => m.kind === 'workspaces'],
-    ['sessions', { type: 'sessions' }, (m) => m.kind === 'sessions'],
+    ['sessions Unicode preview', { type: 'sessions' }, (m) => m.kind === 'sessions' && m.items[0].projections.values.turnOutline[0].response === '鼓掌 �…' && m.items[0].projections.values.turnOutline[0].prompt === '👏'],
     ['history+projections', { type: 'history', sessionId: 's1' }, (m) => m.kind === 'history' && m.sessionId === 's1' && m.projections && m.projections.values.tokenUsage && m.bytes > 0],
     ['history image reference', { type: 'history', sessionId: 's1', view: 'conversation' }, (m) => m.kind === 'history' && m.events[0].data.content[0].attachment.attachmentId === 'att-image-1'],
     ['attachment bytes', { type: 'attachment', sessionId: 's1', attachmentId: 'att-image-1' }, (m) => m.kind === 'attachment' && m.sessionId === 's1' && m.attachment.mediaType === 'image/png' && m.data === 'iVBORw0KGgo='],
