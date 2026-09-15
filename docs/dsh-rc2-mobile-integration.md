@@ -66,6 +66,10 @@
 
 这是最新历史窗口和活动生成状态在同一个上游切点的快照。没有正在生成的 attempt 时省略 `activeAttempt`，客户端应清空临时输出。`hasMore` 为 true 时同时返回 `nextBeforeSeq`，按普通历史请求补更早内容；`replace` 指当前订阅基线需要替换，不能把该窗口误认为完整历史。
 
+首屏窗口：网关向 Host `session.follow` 显式传入 `maxMessages: 12`，再将 conversation 事件限制在约 256 KiB 的最新连续后缀。单条最新消息不可拆分，独自超限时仍完整保留；活动 attempt 和 projections 不计入此正文预算，也不裁剪。被预算排除的较早记录通过 `hasMore/nextBeforeSeq` 按原协议分页获取。历史正文窗口可以缩小，但 `cursor` 始终保留 Host 的原子切点。
+
+读取更早页时，为获取当前切点而打开的短暂 follow 仅请求 1 条消息；实际 `session.page` 继续使用客户端请求的 `maxMessages`。此调整同时作用于 iOS 和 Android，不依赖本地历史磁盘缓存。
+
 客户端只处理当前 `subscriptionId`。收到新 snapshot 后更新 `streamId`，清理上一个 stream 的临时状态，并把持久流水位设为 `cursor`，不能使用精简 events 的最大 seq 代替它：精简视图可能隐藏了末尾的系统事件。
 
 未发送 `assistantStream: true` 的连接仍接收持久 `event`，不会收到伪装成持久事件的 token。control 连接不能订阅对话流。

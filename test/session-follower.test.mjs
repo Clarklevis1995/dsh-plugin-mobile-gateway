@@ -117,3 +117,19 @@ assert.throws(() => createFollowDecoder('s1')({ ...snapshot(), assistantStream: 
 }
 
 console.log('SESSION FOLLOWER TESTS PASSED')
+
+// A rejected legacy migration cannot recover through repeated follow openings.
+{
+  let opens = 0
+  const errors = []
+  const follower = createSessionFollower({ async openSessionStream() {
+    opens++
+    throw Object.assign(new Error('adapter refuses this format v0 Session: unexpected member origin'),
+      { code: 'SESSION_QUERY_PERSISTENCE_FAILED' })
+  } }, { retryMs: 1, onFrame() { assert.fail('no snapshot is available') },
+    onError(error, context) { errors.push({ error, context }) } })
+  await follower.start('legacy', 'sub')
+  assert.equal(opens, 1)
+  assert.equal(errors.length, 1)
+  assert.equal(errors[0].context.retrying, false)
+}

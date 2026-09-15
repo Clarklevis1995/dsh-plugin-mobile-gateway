@@ -312,6 +312,7 @@ ctx.typertGateway = {
       const sessionId = req.args.request.address.sessionId
       const state = liveFollows.get(sessionId)
       assert.ok(state, 'test requires a live follow fixture')
+      assert.equal(req.args.request.maxMessages, 12, 'live opening must bound history at the Host')
       state.signals.push(req.signal)
       return (async function* () {
         yield structuredClone(state.snapshot)
@@ -322,6 +323,11 @@ ctx.typertGateway = {
       })()
     }
     if (req.namespace === 'session' && req.method === 'follow') {
+      if (req.args.request.address.sessionId === 'broken-history') {
+        assert.equal(req.args.request.maxMessages, 1)
+        throw Object.assign(new Error('adapter refuses this format v0 Session: unexpected member origin'),
+          { code: 'SESSION_QUERY_PERSISTENCE_FAILED' })
+      }
       const value = (await api.sessions.history()).result.value
       const records = value.events.map((entry) => ({ type: 'event', event: entry.event }))
       return (async function* () {
@@ -378,6 +384,65 @@ function waitFor(pred, timeout) { return new Promise((res) => { const t0 = Date.
   assert.equal(got.find(frame => frame.seq === 9000).event.isError, true)
   assert.equal(got.find(frame => frame.seq === 9001).event.stream[0].type, 'chunk')
   interactionResults.push(['v3 failed tool and attempt payloads', true])
+
+  // Auxiliary queries must report the real failure with their own request identity.
+  for (const type of ['permission-options', 'context-usage', 'session-stats']) {
+    const firstResponse = got.length
+    ws.send(JSON.stringify({ type, sessionId: 'broken-history' }))
+    assert.equal(await waitFor(() => got.slice(firstResponse).some(frame => frame.kind === 'error' && frame.requestType === type), 2000), true)
+    const reply = got.slice(firstResponse).find(frame => frame.kind === 'error' && frame.requestType === type)
+    assert.equal(reply.kind, 'error')
+    assert.equal(reply.requestType, type)
+    assert.equal(reply.sessionId, 'broken-history')
+    assert.equal(reply.code, 'SESSION_QUERY_PERSISTENCE_FAILED')
+    assert.match(reply.message, /unexpected member origin/)
+    interactionResults.push([`${type} preserves history failure and correlation`, true])
+  }
+
+  // Opening byte budget keeps a contiguous latest suffix, without changing stream state.
+  for (const oversizedLatest of [false, true]) {
+    const sessionId = `opening-budget-${oversizedLatest}`
+    const records = Array.from({ length: 60 }, (_, index) => ({ type: 'event', event: {
+      type: 'assistant/message', seq: index + 1, time: index + 1, surfaceOp: 'append',
+      data: { turn: index + 1, step: 1, message: { content: [{ type: 'text',
+        text: `${index + 1}:` + '历史正文。'.repeat(oversizedLatest && index === 59 ? 30_000 : 4_000),
+      }] } },
+    } }))
+    const prefix = { revision: 4, activeAttempt: { attemptId: 'active', turn: 61, step: 1,
+      startedAfterSeq: 65, nextIndex: 1,
+      stream: [{ type: 'text-chunks', time0: 100, index: 0, texts: ['继续生成'], dt: [] }] } }
+    const projections = { asOfSeq: 65, values: { todos: [{ content: '任务', status: 'completed' }] } }
+    const state = { signals: [], frames: [], snapshot: {
+      type: 'snapshot', header: { version: 3, id: sessionId }, cursor: 65,
+      records, hasMore: false, projections, assistantStream: prefix,
+    } }
+    liveFollows.set(sessionId, state)
+    const socket = new WebSocket(`ws://127.0.0.1:${webServer.port}/ws/mobile`, { headers: { 'X-DSH-Channel': 'conversation' } })
+    const frames = []
+    socket.on('message', data => frames.push(JSON.parse(data.toString())))
+    await new Promise(resolve => socket.once('open', resolve))
+    try {
+      socket.send(JSON.stringify({ type: 'subscribe', sessionId, assistantStream: true }))
+      assert.equal(await waitFor(() => frames.some(frame => frame.kind === 'session-snapshot'), 2000), true)
+      const snapshot = frames.find(frame => frame.kind === 'session-snapshot')
+      assert.equal(snapshot.hasMore, true)
+      assert.equal(snapshot.nextBeforeSeq, snapshot.events[0].seq)
+      assert.deepEqual(snapshot.events.map(event => event.seq),
+        Array.from({ length: snapshot.events.length }, (_, index) => snapshot.nextBeforeSeq + index))
+      assert.equal(snapshot.events.at(-1).seq, 60)
+      assert.equal(snapshot.events.at(-1).data.message.content[0].text, records.at(-1).event.data.message.content[0].text)
+      assert.equal(snapshot.cursor, 65, 'filtered history tail must not replace durable watermark')
+      assert.deepEqual(snapshot.assistantStream, prefix)
+      assert.deepEqual(snapshot.projections, projections)
+      if (oversizedLatest) assert.equal(snapshot.events.length, 1)
+      else {
+        assert.ok(snapshot.bytes <= 256 * 1024)
+        assert.ok(snapshot.events.length < records.length)
+        console.log(`opening budget: ${Buffer.byteLength(JSON.stringify(records))} -> ${snapshot.bytes} bytes; ${records.length} -> ${snapshot.events.length} events`)
+      }
+      interactionResults.push([`rc2 bounded opening with oversized latest=${oversizedLatest}`, true])
+    } finally { socket.terminate() }
+  }
 
   // rc.2 follow: authoritative snapshot, independent token identity, real settlement.
   {

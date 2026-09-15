@@ -78,6 +78,7 @@ assert.equal(history.projections.asOfSeq, 9)
 
 const older = await host.sessions.history({ sessionId: 's1', beforeSeq: 5, maxMessages: 20 })
 assert.equal(older.events[0].event.type, 'user/message')
+assert.equal(calls.filter(call => call.namespace === 'session' && call.method === 'follow').at(-1).args.request.maxMessages, 1)
 const pageCall = calls.find((call) => call.namespace === 'session' && call.method === 'page')
 assert.deepEqual(pageCall.args, {
   request: {
@@ -163,7 +164,7 @@ console.log('DSH HOST ADAPTER TESTS PASSED')
 const followAbort = new AbortController()
 await host.openSessionStream('s1', followAbort.signal)
 assert.deepEqual(calls.at(-1), { namespace: 'session', method: 'follow',
-  args: { request: { address: { kind: 'session', sessionId: 's1' }, assistantStream: true } }, signal: followAbort.signal })
+  args: { request: { address: { kind: 'session', sessionId: 's1' }, maxMessages: 12, assistantStream: true } }, signal: followAbort.signal })
 followAbort.abort()
 const badHost = createDshHostAdapter({ invoke: async () => ({}), stream: async () => (async function* () {
   yield { type: 'snapshot', header: { id: 's1', version: 2 }, cursor: 0, records: [], projections: {} }
