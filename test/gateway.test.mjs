@@ -756,11 +756,12 @@ function waitFor(pred, timeout) { return new Promise((res) => { const t0 = Date.
     type: 'user/message',
     seq: 88,
     time: 88,
-    data: { content: [{ type: 'image', attachment: { attachmentId: 'att-live', mediaType: 'image/jpeg', bytes: 12, width: 3, height: 4, name: 'live.jpg' } }, { type: 'text', text: 'live image' }], source: { kind: 'user' } },
+    data: { id: 'user-live-88', content: [{ type: 'image', attachment: { attachmentId: 'att-live', mediaType: 'image/jpeg', bytes: 12, width: 3, height: 4, name: 'live.jpg' } }, { type: 'text', text: 'live image' }], source: { kind: 'user' } },
   })
   const liveImageReady = await waitFor(() => got.some((m) => m.kind === 'event' && m.seq === 88), 2000)
   const liveImageEvent = got.find((m) => m.kind === 'event' && m.seq === 88)
   interactionResults.push(['live image reference', liveImageReady && liveImageEvent.event.images[0].attachmentId === 'att-live' && liveImageEvent.event.text === 'live image'])
+  interactionResults.push(['live user message identity', liveImageReady && liveImageEvent.event.raw?.id === 'user-live-88'])
   listeners['session/event']({ id: 's1' }, {
     type: 'command/run',
     seq: 89,

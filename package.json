@@ -1,7 +1,7 @@
 {
   "name": "dsh-plugin-mobile-gateway",
-  "version": "0.7.4",
-  "description": "Updated for dsh 0.1.5-rc.1/2 with dedicated realtime streams, reconnect recovery, history format and cursor validation, and fixes for command attachments and session state sync",
+  "version": "0.7.5",
+  "description": "Mobile gateway for dsh 0.1.5-rc.1/2 with smaller opening history snapshots, accurate query error reporting, Unicode-safe wire frames, and preserved user message IDs",
   "main": "lib/index.mjs",
   "files": [
     "bin",
