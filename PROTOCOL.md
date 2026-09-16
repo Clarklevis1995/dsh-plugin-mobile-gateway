@@ -956,6 +956,8 @@ WebUI 中的“任务”与“进行中的目标”分别对应 DSH 的 `todos` 
 | type | 参数 | 说明 |
 |---|---|---|
 | `agent-presets` | — | preset 名册（含 `isDefault` 标记） |
+| `session-agent-preset` | `sessionId`, `requestId?` | 读取当前会话的 `agentPreset` 和 `locked` |
+| `select-agent-preset` | `sessionId`, `agentPreset`, `requestId?` | 在首次对话前修改当前会话模式，保持 session ID |
 | `defaults` | — | 读取默认 agent 预设 + 默认权限 |
 | `set-default` | `target`(agent-preset\|permission), `value` | 修改默认预设/默认权限（全局） |
 
@@ -966,6 +968,47 @@ WebUI 中的“任务”与“进行中的目标”分别对应 DSH 的 `todos` 
 { "type": "set-default", "target": "agent-preset", "value": "minimal" }
 → { "kind": "set-default", "target": "agent-preset", "value": "minimal", "applied": true }
 ```
+
+### 当前会话模式选择
+
+`hello.capabilities` 包含 `session-agent-preset` 时，可以进入已创建的空白会话后选模式。
+上述两个新增请求走 Control 通道，成功和错误响应均携带 `sessionId` 与原始可选 `requestId`。
+
+```json
+{ "type": "session-agent-preset", "sessionId": "s1", "requestId": "get-mode-1" }
+→ { "kind": "session-agent-preset", "sessionId": "s1", "agentPreset": "standard", "locked": false, "requestId": "get-mode-1" }
+
+{ "type": "select-agent-preset", "sessionId": "s1", "agentPreset": "minimal", "requestId": "set-mode-1" }
+→ { "kind": "select-agent-preset", "sessionId": "s1", "agentPreset": "minimal", "requestId": "set-mode-1" }
+```
+
+候选项使用 `agent-presets.presets`：显示 `name`（缺失时使用 `id`），提交 `id`；带 `broken` 的项不可选。
+当前值以 `session-agent-preset.agentPreset` 为准，不能用全局 `isDefault` 或 Session header 代替。
+Host 在同一 Session 内重组 Agent 并持久化选择，不通过修改全局默认模式实现。
+
+首次消息被 gateway 接受后即锁定；已记录的用户输入或 `turn/start` 也会锁定。
+gateway 对同一 Session 的模式切换与消息提交串行处理，Host 同时保留自身的对话边界检查。
+未知/损坏的模式由 Host 拒绝，之前的模式保持；停止或完成对话不会恢复可修改状态。
+如果状态投影缺失，返回 `agent-preset/unavailable`，客户端不得把未知状态当作可修改。
+
+```json
+{ "kind": "error", "requestType": "select-agent-preset", "sessionId": "s1", "requestId": "set-mode-2", "code": "agent-preset/locked", "message": "session has already started; its agent preset is fixed" }
+```
+
+Control/旧单连接接收全局模式状态增量，不受所订阅会话过滤；只合并实际携带的字段：
+
+```json
+{ "kind": "session-agent-preset-updated", "sessionId": "s1", "agentPreset": "minimal", "seq": 12, "time": 1000 }
+{ "kind": "session-agent-preset-updated", "sessionId": "s1", "locked": true, "seq": 13, "time": 1100 }
+```
+
+模式变化后，App 应丢弃该会话的命令/技能缓存，重新查询；对话通道的 `agent-preset/selected` 事件也保留 `event.agentPreset`。
+增量没有连接基线，进入会话及重连后必须重查 `session-agent-preset`；收到锁定通知或错误后锁定控件。
+发送首条消息和切换模式期间暂时禁用操作，等待切换成功再发送消息；不要用旧查询响应覆盖后到的锁定通知。
+
+`session-create` 和不带 `sessionId` 的首条 `message` 也支持可选 `agentPreset`。
+已带 `sessionId` 的 `message` 不接受该字段；应提前调用 `select-agent-preset`。
+详细 App 状态与验收步骤见 [会话模式接入说明](docs/session-agent-preset-app-integration.md)。
 
 ---
 

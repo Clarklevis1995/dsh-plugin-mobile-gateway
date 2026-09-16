@@ -243,6 +243,7 @@ function expectRejected(url, options = {}) {
     'projection-baseline',
     'images',
     'session-create',
+    'session-agent-preset',
     'commands',
     'tasks',
     'goals',

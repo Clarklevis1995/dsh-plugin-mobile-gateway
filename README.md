@@ -28,6 +28,8 @@ DeepSeek Harness 的设备鉴权移动网关，支持会话与实时事件、排
 - Linux 服务器公网：`wss://<公网 IP>/ws/mobile`
 - 协议文档：[PROTOCOL.md](PROTOCOL.md)
 
+当前源码新增会话模式选择：App 创建空白 Session 后，可查询并修改该 Session 的 Agent preset；首次对话后锁定。通过 `session-agent-preset` 能力发现接入，详见 [App 接入说明](docs/session-agent-preset-app-integration.md)。App 界面需按此说明接入，本次源码尚未发布。
+
 ## 多网关第一阶段（当前源码）
 
 插件提供稳定 `gatewayId`、可配置 `gatewayName`、配对候选地址列表，以及可持久化的“关闭 / 临时开启 / 常驻开启”运行模式。一个 App 可以分别配对不同机器上的网关；客户端多网关管理仍需按 [App 对接说明](docs/multi-gateway-app-integration.md) 实现。本次源码尚未发布新的 npm 版本。

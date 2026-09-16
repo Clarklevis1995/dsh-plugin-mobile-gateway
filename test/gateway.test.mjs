@@ -82,6 +82,7 @@ fs.writeFileSync(outsideFile, Buffer.from('outside workspace'))
 fs.symlinkSync(outsideFile, path.join(fileDownloadRoot, 'outside-link.bin'))
 
 const listeners = {}
+const presetSession = { agentPreset: 'standard', sessionListMetadata: { blank: true, lastPromptAt: null } }
 let disposer = null
 const server = http.createServer((req, res) => { res.writeHead(404); res.end() })
 const webServer = {
@@ -236,6 +237,14 @@ ctx.agentDefaultModel = {
 ctx.typertGateway = {
   async invoke(req) {
     invokeCalls.push(req)
+    if (req.namespace === 'agentPresets' && req.method === 'select') {
+      assert.equal(req.args.agentId, 'preset-session')
+      presetSession.agentPreset = req.args.agentPreset
+      listeners['session/event']({ id: 'preset-session' }, {
+        type: 'agent-preset/selected', seq: 9500, time: 100, data: { agentPreset: req.args.agentPreset },
+      })
+      return req.args.agentPreset
+    }
     if (req.namespace === 'commands' && req.method === 'list') {
       return [
         { name: 'compact', description: 'Compact older conversation history' },
@@ -298,6 +307,12 @@ ctx.typertGateway = {
     throw new Error(`unexpected Remote call ${req.namespace}/${req.method}`)
   },
   async stream(req) {
+    if (req.namespace === 'session' && req.method === 'follow' && req.args.request.address.sessionId === 'preset-session') {
+      return (async function* () {
+        yield { type: 'snapshot', header: { version: 3, id: 'preset-session' }, cursor: 9500, records: [], hasMore: false,
+          projections: { asOfSeq: 9500, values: structuredClone(presetSession) } }
+      })()
+    }
     if (req.namespace === 'workspace' && req.method === 'follow') {
       const value = (await api.workspace.list()).result.value
       return (async function* () {
@@ -528,6 +543,28 @@ function waitFor(pred, timeout) { return new Promise((res) => { const t0 = Date.
       assert.equal(await waitFor(() => controls.some(f => f.kind === 'session-renamed'), 2000), true)
       assert.equal(controls.some(f => f.event), false)
       conversation.resume()
+      conversation.send(JSON.stringify({ type: 'subscribe', sessionId: 'preset-session' }))
+      assert.equal(await waitFor(() => conversations.some(f => f.kind === 'subscribed' && f.sessionId === 'preset-session'), 2000), true)
+      assert.ok(controls.find(f => f.kind === 'hello').capabilities.includes('session-agent-preset'))
+      control.send(JSON.stringify({ type: 'session-agent-preset', sessionId: 'preset-session', requestId: 'preset-state' }))
+      assert.equal(await waitFor(() => controls.some(f => f.requestId === 'preset-state'), 2000), true)
+      assert.equal(controls.find(f => f.requestId === 'preset-state').locked, false)
+      control.send(JSON.stringify({ type: 'select-agent-preset', sessionId: 'preset-session', agentPreset: 'minimal', requestId: 'preset-select' }))
+      assert.equal(await waitFor(() => controls.some(f => f.requestId === 'preset-select')
+        && conversations.some(f => f.event?.type === 'agent-preset/selected'), 2000), true)
+      assert.equal(controls.find(f => f.requestId === 'preset-select').agentPreset, 'minimal')
+      assert.equal(controls.find(f => f.kind === 'session-agent-preset-updated').agentPreset, 'minimal')
+      assert.equal(conversations.find(f => f.event?.type === 'agent-preset/selected').event.agentPreset, 'minimal')
+      assert.equal(conversations.some(f => f.kind === 'session-agent-preset-updated'), false)
+      presetSession.sessionListMetadata = { blank: false, lastPromptAt: 101 }
+      listeners['session/event']({ id: 'preset-session' }, { type: 'turn/start', seq: 9501, time: 101, data: { turn: 0 } })
+      control.send(JSON.stringify({ type: 'select-agent-preset', sessionId: 'preset-session', agentPreset: 'standard', requestId: 'preset-locked' }))
+      assert.equal(await waitFor(() => controls.some(f => f.requestId === 'preset-locked')
+        && controls.some(f => f.kind === 'session-agent-preset-updated' && f.locked), 2000), true)
+      assert.equal(controls.find(f => f.requestId === 'preset-locked').code, 'agent-preset/locked')
+      conversation.send(JSON.stringify({ type: 'select-agent-preset', sessionId: 'preset-session', agentPreset: 'standard' }))
+      assert.equal(await waitFor(() => conversations.some(f => f.code === 'wrong-channel' && f.requestType === 'select-agent-preset'), 2000), true)
+      interactionResults.push(['session preset state, selection, locking and split-channel notifications', true])
       conversation.send(JSON.stringify({ type: 'file-list', requestId: 'wrong-lane', sessionId: 's1' }))
       assert.equal(await waitFor(() => conversations.some(f => f.code === 'wrong-channel'), 2000), true)
     } finally {
