@@ -174,6 +174,8 @@ func connectAuthenticated(publicURL: URL, token: String) -> URLSessionWebSocketT
 `subscribed` 之后，服务端会紧接着发送该 Session 尚未处理的
 `question-requested` / `approval-requested`，并标记 `replay: true`。客户端必须按
 `rpcId` 去重。这保证移动端在审批产生后才打开已有 Session 时仍能显示待处理卡片。
+启用 `split-channels` 时，`subscribe` 仍由 conversation 连接发送，但上述重放帧会
+桥接到 control 连接；交互卡片不得发送到 conversation 连接。
 
 ---
 
@@ -186,9 +188,16 @@ Human-in-the-loop 分为两条独立通道：
 
 二者都是 Host waterfall 的临时请求，不属于持久化的 `session/event`，且都必须以插件为该次请求生成的 `rpcId` 通过专用响应帧回答，不能作为普通 `message` 发送。该内部实现不改变移动端帧格式。
 
+同一请求遵循“任意端先完成、所有端同步收起”的单胜方规则：Mobile 任一设备先完成时，Gateway 会结束 Host 的 WebUI 远端请求并让所有 WebUI 实例收起；任一 WebUI 先完成时，Host 会取消其余 WebUI 实例，Gateway 同时向所有 Mobile 设备广播终态。迟到响应统一视为 `not-pending`。
+
 ### 3.1 提问与回答
 
-Agent 调用 DSH 的 `ask_user_question` 工具时，插件直接接入 Host 的 `user-questions/request` waterfall，并把临时请求投影给移动端。若没有可处理该 Session 的移动连接，插件调用 `next()`，由 WebUI 或后续 Host answerer 处理。
+Agent 调用 DSH 的 `ask_user_question` 工具时，插件接入 Host 的
+`user-questions/request` waterfall，把临时请求投影给移动端，同时继续启动 WebUI
+或后续 Host answerer。任一端先给出有效答案即完成该请求；Gateway 会向所有移动端
+广播 `question-resolved`。Mobile 先完成时，Gateway 同时取消 WebUI 的对应远端请求，
+使其收起半屏弹窗；WebUI 先完成时，移动端收到终态后收起对应卡片。若 Mobile 已断开，
+则由仍在等待的 Host answerer 继续处理。
 
 #### `question-requested` — 服务端推送问题
 
@@ -292,7 +301,12 @@ Agent 调用 DSH 的 `ask_user_question` 工具时，插件直接接入 Host 的
 
 ### 3.2 操作审批
 
-当 DSH 的工具管线要求人工授权时，插件会接入一次 Host `approval/request` waterfall，并向移动端投影为 `approval-requested`。这正是 Web UI 中“等待审批”卡片对应的能力：`reason` 是面向用户的审批说明，`toolName` 标识请求操作的工具，`callId` 可用于与实时工具调用轨迹关联。
+当 DSH 的工具管线要求人工授权时，插件会接入一次 Host `approval/request`
+waterfall，并向移动端投影为 `approval-requested`，同时保留 WebUI answerer；WebUI
+与 Mobile 中任一端先提交的有效决定生效。Gateway 随后向所有移动端广播
+`approval-resolved`；若 Mobile 先完成，还会取消 WebUI 的对应远端请求以收起审批弹窗。
+`reason` 是面向用户的审批说明，`toolName` 标识请求操作的工具，`callId` 可用于与实时
+工具调用轨迹关联。
 
 #### `approval-requested` — 服务端推送待审批操作
 

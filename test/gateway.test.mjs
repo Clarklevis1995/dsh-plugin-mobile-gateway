@@ -578,36 +578,62 @@ function waitFor(pred, timeout) { return new Promise((res) => { const t0 = Date.
   const queueBaselineReady = await waitFor(() => got.some((m) => m.kind === 'session-queues' && m.queues.s1?.[0]?.id === 'message-1'), 2000)
   const queueBaseline = got.find((m) => m.kind === 'session-queues' && m.queues.s1?.[0]?.id === 'message-1')
   interactionResults.push(['session queue baseline on connect', queueBaselineReady && queueBaseline.queues.s1[0].placement === 'queued' && queueBaseline.queues.s1[0].message.content[0].text === '原消息'])
-  const questionOne = listeners['user-questions/request']({
+  let questionDownstreamCalls = 0
+  let approvalDownstreamCalls = 0
+  let questionDownstreamAborts = 0
+  let approvalDownstreamAborts = 0
+  const waitForMobileQuestion = (request) => () => {
+    questionDownstreamCalls += 1
+    return new Promise((resolve, reject) => {
+      request.signal.addEventListener('abort', () => {
+        questionDownstreamAborts += 1
+        reject(request.signal.reason)
+      }, { once: true })
+    })
+  }
+  const waitForMobileApproval = (request) => () => {
+    approvalDownstreamCalls += 1
+    return new Promise((resolve, reject) => {
+      request.signal.addEventListener('abort', () => {
+        approvalDownstreamAborts += 1
+        reject(request.signal.reason)
+      }, { once: true })
+    })
+  }
+  const questionOneRequest = {
     agent: { id: 's1' },
     questions: [
       { id: 'direction', header: 'Research', question: 'Choose a direction', options: [{ label: 'Core', description: 'Architecture' }, { label: 'Mobile' }], multiSelect: false },
       { id: 'detail', question: 'Anything else?', options: [], multiSelect: false },
     ],
-  }, () => Promise.reject(new Error('unexpected question fallback')))
-  const questionTwo = listeners['user-questions/request']({
+  }
+  const questionOne = listeners['user-questions/request'](questionOneRequest, waitForMobileQuestion(questionOneRequest))
+  const questionTwoRequest = {
     agent: { id: 's2' },
     questions: [{ id: 'confirm', question: 'Continue?', options: [{ label: 'Yes' }, { label: 'No' }], multiSelect: false }],
-  }, () => Promise.reject(new Error('unexpected question fallback'))).then(
+  }
+  const questionTwo = listeners['user-questions/request'](questionTwoRequest, waitForMobileQuestion(questionTwoRequest)).then(
     (value) => value,
     (error) => error,
   )
-  const approvalOne = listeners['approval/request']({
+  const approvalOneRequest = {
     agent: { id: 's1' },
     toolName: 'bash',
     callId: 'call-1',
     reason: 'escalate sandbox to danger-full-access',
-  }, () => Promise.resolve('unavailable'))
-  const approvalTwo = listeners['approval/request']({
+  }
+  const approvalOne = listeners['approval/request'](approvalOneRequest, waitForMobileApproval(approvalOneRequest))
+  const approvalTwoRequest = {
     agent: { id: 's2' },
     toolName: 'bash',
     reason: 'write outside the workspace',
-  }, () => Promise.resolve('unavailable'))
+  }
+  const approvalTwo = listeners['approval/request'](approvalTwoRequest, waitForMobileApproval(approvalTwoRequest))
 
   const requestedReady = await waitFor(() => got.filter((m) => m.kind === 'question-requested').length === 2, 2000)
   const requested = got.find((m) => m.kind === 'question-requested' && m.sessionId === 's1')
   const requestedTwo = got.find((m) => m.kind === 'question-requested' && m.sessionId === 's2')
-  interactionResults.push(['question requested', requestedReady && requested && requested.questions.length === 2 && requested.questions[0].options[0].description === 'Architecture'])
+  interactionResults.push(['question requested on Mobile and offered to WebUI', requestedReady && requested && requested.questions.length === 2 && requested.questions[0].options[0].description === 'Architecture' && questionDownstreamCalls === 2])
 
   ws.send(JSON.stringify({
     type: 'question-answer',
@@ -636,11 +662,13 @@ function waitFor(pred, timeout) { return new Promise((res) => { const t0 = Date.
   interactionResults.push(['question answer', answerReady && answerReceipt.accepted === true && answerValue.answers[1].custom === 'Security'])
   const answeredResolved = await waitFor(() => got.some((m) => m.kind === 'question-resolved' && m.rpcId === requested.rpcId && m.outcome === 'answered'), 2000)
   interactionResults.push(['question answered resolution', answeredResolved])
+  const questionWebUICancelled = await waitFor(() => questionDownstreamAborts === 1, 2000)
+  interactionResults.push(['Mobile question answer cancels the WebUI request', questionWebUICancelled && questionOneRequest.signal.aborted])
 
   const approvalRequestedReady = await waitFor(() => got.filter((m) => m.kind === 'approval-requested').length === 2, 2000)
   const requestedApproval = got.find((m) => m.kind === 'approval-requested' && m.sessionId === 's1')
   const requestedApprovalTwo = got.find((m) => m.kind === 'approval-requested' && m.sessionId === 's2')
-  interactionResults.push(['approval requested', approvalRequestedReady && requestedApproval && requestedApproval.toolName === 'bash' && requestedApproval.callId === 'call-1' && requestedApproval.reason === 'escalate sandbox to danger-full-access'])
+  interactionResults.push(['approval requested on Mobile and offered to WebUI', approvalRequestedReady && requestedApproval && requestedApproval.toolName === 'bash' && requestedApproval.callId === 'call-1' && requestedApproval.reason === 'escalate sandbox to danger-full-access' && approvalDownstreamCalls === 2])
 
   const approvalReplayCount = got.filter((m) => m.kind === 'approval-requested' && m.rpcId === requestedApprovalTwo.rpcId).length
   ws.send(JSON.stringify({ type: 'subscribe', sessionId: 's2' }))
@@ -650,6 +678,34 @@ function waitFor(pred, timeout) { return new Promise((res) => { const t0 = Date.
   interactionResults.push(['approval replayed when existing session is opened', subscribedApprovalReady && subscribedApproval && subscribedApproval.replay === true && wrongSessionApprovalCount === 1])
   ws.send(JSON.stringify({ type: 'unsubscribe' }))
   await waitFor(() => got.some((m) => m.kind === 'subscribed' && m.sessionId === null), 2000)
+
+  // Reopening a Session happens on the conversation lane, but interaction
+  // frames must be restored on the companion control lane.
+  {
+    const control = new WebSocket(`ws://127.0.0.1:${webServer.port}/ws/mobile`, { headers: { 'X-DSH-Channel': 'control' } })
+    const conversation = new WebSocket(`ws://127.0.0.1:${webServer.port}/ws/mobile`, { headers: { 'X-DSH-Channel': 'conversation' } })
+    const controls = []
+    const conversations = []
+    control.on('message', data => controls.push(JSON.parse(data.toString())))
+    conversation.on('message', data => conversations.push(JSON.parse(data.toString())))
+    try {
+      assert.equal(await waitFor(() => controls.some(frame => frame.kind === 'hello') && conversations.some(frame => frame.kind === 'hello'), 2000), true)
+      const beforeApprovalReplay = controls.filter(frame => frame.kind === 'approval-requested' && frame.rpcId === requestedApprovalTwo.rpcId).length
+      const beforeQuestionReplay = controls.filter(frame => frame.kind === 'question-requested' && frame.rpcId === requestedTwo.rpcId).length
+      conversation.send(JSON.stringify({ type: 'subscribe', sessionId: 's2' }))
+      assert.equal(await waitFor(() => conversations.some(frame => frame.kind === 'subscribed' && frame.sessionId === 's2'), 2000), true)
+      const restored = await waitFor(() => (
+        controls.filter(frame => frame.kind === 'approval-requested' && frame.rpcId === requestedApprovalTwo.rpcId).length > beforeApprovalReplay &&
+        controls.filter(frame => frame.kind === 'question-requested' && frame.rpcId === requestedTwo.rpcId).length > beforeQuestionReplay
+      ), 2000)
+      const replayedApproval = controls.filter(frame => frame.kind === 'approval-requested' && frame.rpcId === requestedApprovalTwo.rpcId).at(-1)
+      const replayedQuestion = controls.filter(frame => frame.kind === 'question-requested' && frame.rpcId === requestedTwo.rpcId).at(-1)
+      interactionResults.push(['split-channel Session reopen restores question and approval on control lane', restored && replayedApproval?.replay === true && replayedQuestion?.replay === true])
+    } finally {
+      conversation.terminate()
+      control.terminate()
+    }
+  }
 
   ws.send(JSON.stringify({
     type: 'approval-response',
@@ -663,6 +719,8 @@ function waitFor(pred, timeout) { return new Promise((res) => { const t0 = Date.
   interactionResults.push(['approval allowed once', approvalAllowedReady && approvalAllowedReceipt.accepted === true && approvalAllowedReceipt.outcome === 'allowed-once' && await approvalOne === 'allowed-once'])
   const approvalAllowedResolved = await waitFor(() => got.some((m) => m.kind === 'approval-resolved' && m.rpcId === requestedApproval.rpcId && m.approvalId === requestedApproval.approvalId && m.outcome === 'allowed-once'), 2000)
   interactionResults.push(['approval allowed resolution', approvalAllowedResolved])
+  const approvalWebUICancelled = await waitFor(() => approvalDownstreamAborts === 1, 2000)
+  interactionResults.push(['Mobile approval decision cancels the WebUI request', approvalWebUICancelled && approvalOneRequest.signal.aborted])
 
   ws.send(JSON.stringify({
     type: 'approval-response',
@@ -676,6 +734,31 @@ function waitFor(pred, timeout) { return new Promise((res) => { const t0 = Date.
   interactionResults.push(['approval rejected', approvalRejectedReady && approvalRejectedReceipt.accepted === true && approvalRejectedReceipt.outcome === 'rejected' && await approvalTwo === 'rejected'])
   const approvalRejectedResolved = await waitFor(() => got.some((m) => m.kind === 'approval-resolved' && m.rpcId === requestedApprovalTwo.rpcId && m.approvalId === requestedApprovalTwo.approvalId && m.outcome === 'rejected'), 2000)
   interactionResults.push(['approval rejected resolution', approvalRejectedResolved])
+  const rejectedApprovalWebUICancelled = await waitFor(() => approvalDownstreamAborts === 2, 2000)
+  interactionResults.push(['Mobile approval rejection cancels the WebUI request', rejectedApprovalWebUICancelled && approvalTwoRequest.signal.aborted])
+
+  let resolveWebApproval
+  const webApproval = listeners['approval/request']({
+    agent: { id: 's-web-approval' },
+    toolName: 'bash',
+    reason: 'choose from WebUI or Mobile',
+  }, () => new Promise(resolve => { resolveWebApproval = resolve }))
+  const webApprovalRequest = await waitFor(() => got.some(frame => frame.kind === 'approval-requested' && frame.sessionId === 's-web-approval'), 2000)
+  resolveWebApproval('allowed-once')
+  const webApprovalValue = await webApproval
+  const webApprovalResolved = await waitFor(() => got.some(frame => frame.kind === 'approval-resolved' && frame.sessionId === 's-web-approval' && frame.outcome === 'allowed-once'), 2000)
+  interactionResults.push(['WebUI approval closes the shared request on Mobile', webApprovalRequest && webApprovalValue === 'allowed-once' && webApprovalResolved])
+
+  let resolveWebQuestion
+  const webQuestion = listeners['user-questions/request']({
+    agent: { id: 's-web-question' },
+    questions: [{ id: 'choice', question: 'Choose anywhere', options: [{ label: 'WebUI' }, { label: 'Mobile' }], multiSelect: false }],
+  }, () => new Promise(resolve => { resolveWebQuestion = resolve }))
+  const webQuestionRequest = await waitFor(() => got.some(frame => frame.kind === 'question-requested' && frame.sessionId === 's-web-question'), 2000)
+  resolveWebQuestion({ answers: [{ id: 'choice', selected: ['WebUI'] }] })
+  const webQuestionValue = await webQuestion
+  const webQuestionResolved = await waitFor(() => got.some(frame => frame.kind === 'question-resolved' && frame.sessionId === 's-web-question' && frame.outcome === 'answered'), 2000)
+  interactionResults.push(['WebUI question closes the shared request on Mobile', webQuestionRequest && webQuestionValue.answers[0].selected[0] === 'WebUI' && webQuestionResolved])
 
   ws.send(JSON.stringify({ type: 'approval-response', rpcId: requestedApprovalTwo.rpcId, sessionId: 's2', approvalId: requestedApprovalTwo.approvalId, outcome: 'later' }))
   const badApprovalReady = await waitFor(() => got.some((m) => m.kind === 'error' && m.requestType === 'approval-response'), 2000)

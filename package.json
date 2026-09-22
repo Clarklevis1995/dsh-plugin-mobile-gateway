@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-mobile-gateway",
-  "version": "0.7.6",
+  "version": "0.7.7",
   "description": "Mobile gateway for dsh 0.1.5-rc.1/2 with per-session Agent preset selection before the first conversation, automatic preset locking after conversation starts, and live preset updates",
   "main": "lib/index.mjs",
   "files": [
