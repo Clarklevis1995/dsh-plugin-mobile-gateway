@@ -1,6 +1,6 @@
 # dsh Mobile Gateway — WebSocket 协议参考
 
-移动端通过经过设备鉴权的 WebSocket 连接与 dsh 通信：订阅 agent 实时输出、发送文字和图片、处理 Human-in-the-loop 提问与操作审批、查询会话/工作区/历史、调整会话配置。本协议由持久化插件 `dsh-plugin-mobile-gateway` 实现。当前源码仅适配 DSH 0.1.5-rc.2 / Session format 3，移动端接入变更见 [rc.2 接入说明](docs/dsh-rc2-mobile-integration.md)。
+移动端通过经过设备鉴权的 WebSocket 连接与 dsh 通信：订阅 agent 实时输出、发送文字和图片、处理 Human-in-the-loop 提问与操作审批、查询会话/工作区/历史、调整会话配置。本协议由持久化插件 `dsh-plugin-mobile-gateway` 实现。当前源码适配 DSH 0.1.7-rc.1 / Session format 4；移动端实时流接入见 [rc.2 接入说明](docs/dsh-rc2-mobile-integration.md)。
 
 - **本机端点**：`ws://127.0.0.1:3080/ws/mobile`（与 dsh web GUI 同端口）
 - **局域网端点**：`ws://<电脑的私有局域网 IP>:3081/ws/mobile`（插件独立监听，只提供经过鉴权的 WebSocket）
@@ -696,8 +696,8 @@ WebUI、App 或其他客户端造成的变化通过以下帧主动推送：
 - 返回**原始 SessionEvent**（`{type, seq, time, data}`，方案A），可选裁剪
 - 图片不会内联进历史页。`user/message.data.content[]` 中的图片块为 `{ "type":"image", "attachment": ImageAttachmentRef }`；iOS 使用其中的 `attachmentId` 请求图片数据
 - `maxBytes`：单帧字节预算，默认 **4 MiB**；超预算保留最新部分并给出 `nextBeforeSeq` 续页（客户端 16 MiB 上限的安全余量）
-- `view: "conversation"`：**对话裁剪模式**——隐藏系统消息与 request/header、request/context，移除 Assistant 事件的内嵌 `data.stream`，`tool/result` 嵌套文本截断到 2000 字符
-- 分页：`hasMore` 为真时用 `beforeSeq: nextBeforeSeq, historyFormatVersion: 3` 请求更早一页
+- `view: "conversation"`：**对话裁剪模式**——隐藏系统消息与 request/header、request/context，移除 Assistant 事件的内嵌 `data.stream`，`tool/result` 文本截断到 2000 字符
+- 分页：`hasMore` 为真时用 `beforeSeq: nextBeforeSeq, historyFormatVersion: 4` 请求更早一页
 
 ```json
 → { "kind": "history", "sessionId": "session-abc", "events": [ ...原始事件... ],
@@ -954,7 +954,7 @@ WebUI 中的“任务”与“进行中的目标”分别对应 DSH 的 `todos` 
 
 | type | 参数 | 说明 |
 |---|---|---|
-| `permission-options` | `sessionId?` | 可用权限 preset 列表（`namespace`）+ 该会话当前生效值（`sessionPermissions`） |
+| `permission-options` | `sessionId?` | Host `permissionPresets/catalog` 的 `options`、`defaultOptions`、`defaultPreset`，以及该会话当前生效值（`sessionPermissions`） |
 | `permission` | `sessionId`, `name` | 切换**该会话**的权限 preset（走官方 `/permission` 命令，不触发模型） |
 
 ```json
@@ -972,12 +972,12 @@ WebUI 中的“任务”与“进行中的目标”分别对应 DSH 的 `todos` 
 | `agent-presets` | — | preset 名册（含 `isDefault` 标记） |
 | `session-agent-preset` | `sessionId`, `requestId?` | 读取当前会话的 `agentPreset` 和 `locked` |
 | `select-agent-preset` | `sessionId`, `agentPreset`, `requestId?` | 在首次对话前修改当前会话模式，保持 session ID |
-| `defaults` | — | 读取默认 agent 预设 + 默认权限 |
+| `defaults` | — | 读取默认 Agent 预设、默认权限及动态可选默认权限（`permissionDefaultOptions`） |
 | `set-default` | `target`(agent-preset\|permission), `value` | 修改默认预设/默认权限（全局） |
 
 ```json
 { "type": "defaults" }
-→ { "kind": "defaults", "agentPresetDefault": "standard", "permissionDefault": "ask" }
+→ { "kind": "defaults", "agentPresetDefault": "standard", "permissionDefault": "ask", "permissionDefaultOptions": [{ "value": "ask", "name": "Ask" }], "modeSelectionEnabled": true }
 
 { "type": "set-default", "target": "agent-preset", "value": "minimal" }
 → { "kind": "set-default", "target": "agent-preset", "value": "minimal", "applied": true }
@@ -1090,7 +1090,7 @@ Control/旧单连接接收全局模式状态增量，不受所订阅会话过滤
 3. `{"type":"subscribe","sessionId":"session-abc","assistantStream":true}`，等待 `session-snapshot`
 4. `{"type":"message","sessionId":"session-abc","text":"帮我查一下deepseek"}` → `sent`
 5. 盯着 Messages 面板：独立 `assistant-stream` 展示 token，`event` 流提供已提交的消息和工具事件
-6. `{"type":"history","sessionId":"session-abc","view":"conversation","maxMessages":60}` → 最近历史（自动分页用 `beforeSeq: nextBeforeSeq, historyFormatVersion: 3`）
+6. `{"type":"history","sessionId":"session-abc","view":"conversation","maxMessages":60}` → 最近历史（自动分页用 `beforeSeq: nextBeforeSeq, historyFormatVersion: 4`）
 7. `{"type":"session-stats","sessionId":"session-abc"}` → 统计条数据
 8. 完事 `{"type":"unsubscribe"}` 或 Disconnect
 

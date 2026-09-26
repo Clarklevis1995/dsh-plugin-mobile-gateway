@@ -6,7 +6,7 @@
 
 DeepSeek Harness 的设备鉴权移动网关，支持会话与实时事件、排队消息同步及编辑/删除/Steer、Session 归档和重命名的双向同步、停止当前生成并稍后继续、任务列表和当前 Goal 同步及管理、服务端驱动的命令和技能菜单、Human-in-the-loop、图片及文件传输。安装后，Harness WebUI 左侧边栏会出现“移动设备”入口，可直接开启网关、生成配对二维码和管理可信设备。
 
-> 当前源码以 **DSH 0.1.5-rc.2** 为唯一适配基线，使用 Session format 3；不再兼容更早的 Host 版本。
+> 当前源码以 **DSH 0.1.7-rc.1** 为适配基线，使用 Session format 4；旧版历史游标需重新取得基线。
 >
 > 实时流已改为独立 `assistant-stream` 帧，移动端需要按 [rc.2 接入说明](docs/dsh-rc2-mobile-integration.md) 更新订阅、缓存与分页处理。当前修改尚未发布。
 >
@@ -16,11 +16,11 @@ DeepSeek Harness 的设备鉴权移动网关，支持会话与实时事件、排
 
 ## 协议与 DSH 兼容层
 
-移动端连接的是本项目维护的 `dsh-mobile-v1`，不是 DSH 的内部 Remote 协议。插件内部通过独立 Host Adapter 对接 DSH 0.1.5-rc.2 的 Remote Gateway；Session、Workspace、Settings、Commands、Goals 等 namespace 和严格参数只存在于该适配层。
+移动端连接的是本项目维护的 `dsh-mobile-v1`，不是 DSH 的内部 Remote 协议。插件内部通过独立 Host Adapter 对接 DSH 0.1.7-rc.1 的 Remote Gateway；Session、Workspace、Settings、Commands、Goals、Permission Presets 等 namespace 和严格参数只存在于该适配层。
 
 配对鉴权和 `dsh-mobile-v1` / `hello.protocol = 3` 保持不变。新版实时 token 不占用持久事件的 `seq`：客户端显式订阅 `assistantStream: true`，接收原子的 `session-snapshot` 和独立增量；普通 `event` 只携带持久事件。未接入新订阅的客户端只能收到持久消息。
 
-历史响应包含 `historyFormatVersion` 和 `cursor`。客户端格式变化时应清理历史缓存、重新安装基线；携带 `beforeSeq` 的分页或携带 `atSeq` 的 fork 必须同时发送 `historyFormatVersion: 3`。
+历史响应包含 `historyFormatVersion` 和 `cursor`。客户端格式变化时应清理历史缓存、重新安装基线；携带 `beforeSeq` 的分页或携带 `atSeq` 的 fork 必须同时发送 `historyFormatVersion: 4`。
 当前协议接入与验收见 [rc.2 移动端接入说明](docs/dsh-rc2-mobile-integration.md)；早期迁移记录见 [Remote Gateway 重构实施计划](docs/remote-gateway-refactor-plan.md)。
 
 - WebSocket：`/ws/mobile`

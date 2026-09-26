@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { createFollowDecoder, createSessionFollower } from '../lib/session-follower.mjs'
 
 const snapshot = (sessionId = 's1', assistantStream = { revision: 0 }) => ({
-  type: 'snapshot', header: { version: 3, id: sessionId }, cursor: 41,
+  type: 'snapshot', header: { version: 4, id: sessionId }, cursor: 41,
   records: [], hasMore: false, projections: { asOfSeq: 41, values: {} }, assistantStream,
 })
 const start = (attemptId = 'a1', revision = 1) => ({ type: 'assistant-stream', frame: {

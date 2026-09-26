@@ -42,7 +42,7 @@ function fixture() {
       const sessionId = call.args.request.address.sessionId
       if (!states.has(sessionId)) throw Object.assign(new Error('missing session'), { code: 'session/not-found' })
       return (async function* () {
-        yield { type: 'snapshot', header: { id: sessionId, version: 3 }, cursor: 4, records: [], hasMore: true,
+        yield { type: 'snapshot', header: { id: sessionId, version: 4 }, cursor: 4, records: [], hasMore: true,
           projections: { asOfSeq: 4, values: structuredClone(states.get(sessionId)) } }
       })()
     },

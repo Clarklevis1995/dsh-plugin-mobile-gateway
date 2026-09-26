@@ -34,6 +34,9 @@ const gateway = {
     }
     if (call.namespace === 'session' && call.method === 'list') return { items: [{ sessionId: 's1' }] }
     if (call.namespace === 'session' && call.method === 'canOpenWorkspacePath') return true
+    if (call.namespace === 'permissionPresets' && call.method === 'catalog') return {
+      options: [{ value: 'ask', name: 'Ask' }], defaultOptions: [{ value: 'ask', name: 'Ask' }], defaultPreset: 'ask',
+    }
     if (call.namespace === 'llm' && call.method === 'listConfigurableProviders') return [{ provider: 'deepseek', displayName: 'DeepSeek', settingsNs: 'deepseek', settingsPath: [] }]
     if (call.namespace === 'goals' && call.method === 'edit') return { id: 'goal-1', revision: 2 }
     if (call.namespace === 'goals' && call.method === 'clear') return { id: 'goal-1', revision: 3 }
@@ -51,7 +54,7 @@ const gateway = {
       return (async function* () {
         yield {
           type: 'snapshot',
-          header: { version: 3, id: 's1' },
+          header: { version: 4, id: 's1' },
           cursor: 9,
           records: [packed],
           hasMore: true,
@@ -72,7 +75,7 @@ assert.deepEqual(sessionListCall.args, { _request: {} })
 const history = await host.sessions.history({ sessionId: 's1' })
 assert.equal(history.events.length, 1)
 assert.equal(history.events[0].event.seq, 5)
-assert.equal(history.historyFormatVersion, 3)
+assert.equal(history.historyFormatVersion, 4)
 assert.equal(history.cursor, 9)
 assert.equal(history.projections.asOfSeq, 9)
 
@@ -130,6 +133,8 @@ workspaceStreamAbort.abort()
 await host.settings.update({ ns: 'permission', patch: { defaultPreset: 'ask' } })
 const settingsCall = calls.find((call) => call.namespace === 'settings' && call.method === 'update')
 assert.deepEqual(settingsCall.args, { ns: 'permission', patch: { defaultPreset: 'ask' } })
+assert.equal((await host.permissionPresets.catalog()).defaultPreset, 'ask')
+assert.deepEqual(calls.find((call) => call.namespace === 'permissionPresets').args, {})
 
 assert.deepEqual(
   await host.goals.edit({ sessionId: 's1', ref: { id: 'goal-1', revision: 1 }, objective: '完成重构' }),
@@ -179,7 +184,7 @@ await assert.rejects(() => badHost.sessions.history({ sessionId: 's1' }), { code
     invoke: async () => ({}),
     stream: async call => ({
       [Symbol.asyncIterator]() { return this },
-      async next() { return { done: false, value: { type: 'snapshot', header: { id: 's1', version: 3 },
+      async next() { return { done: false, value: { type: 'snapshot', header: { id: 's1', version: 4 },
         cursor: -1, records: [], projections: { asOfSeq: -1, values: {} } } } },
       async return() {
         assert.equal(call.signal.aborted, true)
