@@ -27,6 +27,10 @@
         lanEnabled: true
         lanHost: 0.0.0.0
         lanPort: 3081
+        # PC only: the UI can enable Quick or named Cloudflare Tunnel.
+        # Both use a separate authenticated loopback-only mobile endpoint.
+        # cloudflarePort: 3082
+        # cloudflaredPath: /path/to/cloudflared
         # Written automatically by `sudo npx dsh-plugin-mobile-gateway setup`.
         publicUrlFile: /etc/dsh-mobile-gateway/public-url
 

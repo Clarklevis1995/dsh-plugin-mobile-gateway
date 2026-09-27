@@ -100,13 +100,15 @@ const pairingText = Buffer.from(JSON.stringify(payload), 'utf8').toString('base6
 | `gatewayName` | 同上 | 展示名称，允许改变，不能作为身份或鉴权依据 |
 | `endpoints` | 配对载荷、`GET /mgw/status` | 规范化去重的 URL 字符串数组；不在 `hello` 或 `paired` 返回 |
 
-配对仍保留 `publicUrl`，且它排在本次 `endpoints` 第一项。其后按本机配对请求 `endpoints`、插件配置 `endpoints`、公网配置、已监听 LAN 地址的顺序合并。每个输入列表及合并结果最多 16 项，每项最多 2048 字符。允许 HTTP(S) 输入并转为 WS(S)，拒绝凭证、query、fragment、未指定监听地址及公网明文 WS。
+配对仍保留 `publicUrl`，且它排在本次 `endpoints` 第一项。其后按本机配对请求 `endpoints`、插件配置 `endpoints`、公网配置、已取得的 Cloudflare Tunnel 地址、已监听 LAN 地址的顺序合并。每个输入列表及合并结果最多 16 项，每项最多 2048 字符。允许 HTTP(S) 输入并转为 WS(S)，拒绝凭证、query、fragment、未指定监听地址及公网明文 WS。
 
 `POST /mgw/pair` 可额外传入 `endpoints: string[]`，只用于本次配对，不写入配置。移动端对新地址必须在发送凭证前建立信任；`hello` 的 ID 校验发生在鉴权后，不能替代 TLS 和地址确认。多个网关的 token 独立签发、保存和撤销；App 以网关连接上下文路由原有业务请求。
 
 本机管理接口 `POST /mgw/gateway` 接受 `{"mode":"disabled|temporary|persistent"}` 中的一个具体值，例如 `{"mode":"persistent"}`。兼容旧 `{"enabled":true}`（临时开启）与 false（关闭）；不能同时传 `mode` 和 `enabled`。返回 `gatewayEnabled`、`gatewayMode`、`waitExpiresAt`、`connectedClients`。参数错误返回 400；保存失败返回 500 且不改变当前运行模式。
 
 `GET /mgw/status` 增加身份、地址列表及 `gatewayMode`。模式的持久化不影响配对码有效期和文件传输超时。自动超时关闭若遇到磁盘写入失败，会保持当前进程关闭并记录错误；重启可能仍按旧保存模式运行，需修复存储后再次保存选择。
+
+Windows/macOS PC 可从本机管理接口 `POST /mgw/cloudflare` 一键启用 Quick Tunnel：`{"enabled":true,"mode":"quick"}`，无需账户、域名或 Token；返回的随机公网地址在 `GET /mgw/status` 的 `cloudflare.publicUrl` 中，隧道重启后可能变化，App 需重新扫码确认。固定地址可用命名 Tunnel：`{"enabled":true,"mode":"named","hostname":"gateway.example.com","token":"<Tunnel Token>"}`；后续更新可省略 Token 或传空字符串以保留已保存的 Token，关闭时只需 `{"enabled":false}`。状态字段返回模式、支持状态、公开地址、本机入口端口、连接状态和错误，但绝不返回 Token。启用时网关自动切为常驻模式；配置与 Token 保存在独立的 `0600` 文件中。插件会在需要时下载并校验 Cloudflare 官方 `cloudflared` 二进制。两种模式仅在 `127.0.0.1:3082`（可配置）接受已鉴权的 `/ws/mobile` WebSocket，其他 HTTP 路径返回 404；网关关闭或插件卸载时该入口及受管进程一同停止。
 
 完整配对示例、旧 App 迁移、地址信任与错误处理见 [App 对接说明](docs/multi-gateway-app-integration.md)。
 
@@ -1120,6 +1122,7 @@ Control/旧单连接接收全局模式状态增量，不受所订阅会话过滤
 
 | 版本 | 新增 |
 |---|---|
+| v0.8.1（当前源码） | PC 端 Cloudflare Quick / 命名 Tunnel；插件私有 `cloudflared` 缓存及校验；配对入口选择指引；网关重启与 DSH Web 停止工具 |
 | v0.7.2 | 独立对话/控制连接；空 Session 创建；停止生成与稍后继续；排队消息同步及编辑/删除/Steer；App 归档/重命名 Session；WebUI 归档集合和名称变化实时同步到 App |
 | v0.1.5 | workspace-create / directories / host |
 | v0.1.6 | 修复消息分发器遗漏（host/directories/workspace-create 未路由） |

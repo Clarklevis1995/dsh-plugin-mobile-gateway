@@ -10,6 +10,8 @@ DeepSeek Harness 的设备鉴权移动网关，支持会话与实时事件、排
 >
 > 实时流已改为独立 `assistant-stream` 帧，移动端需要按 [rc.2 接入说明](docs/dsh-rc2-mobile-integration.md) 更新订阅、缓存与分页处理。当前修改尚未发布。
 >
+> v0.8.1（当前源码）：PC 端可在面板开启 Cloudflare Quick / 命名 Tunnel，使用插件私有缓存中的 `cloudflared` 并校验文件；配对面板增加局域网与外网入口选择指引；工具菜单可重启网关或停止 DSH Web，重启时不再打开新标签页。
+>
 > v0.7.3：优化移动网关运行模式下拉框的箭头间距。
 >
 > v0.7.2：新增独立对话/控制连接、空 Session 创建、停止生成与稍后继续、排队消息同步及编辑/删除/Steer，以及 Session 归档和重命名的双向同步。
@@ -111,7 +113,7 @@ dsh web
 1. 打开 WebUI 的“移动设备”。
 2. 将“网关运行模式”设为“常驻开启”（短期配对也可选“临时开启”）。
 3. 保持“设备鉴权”开启。
-4. 确认面板显示 `ws://<电脑局域网 IP>:3081/ws/mobile`。
+4. 在“配对连接方式”选择“局域网直连”，确认 WebSocket 地址为 `ws://<电脑局域网 IP>:3081/ws/mobile`。即使 Cloudflare Tunnel 已开启，也无需关闭它。选择框旁的问号会按当前网关环境解释各入口并给出场景建议，不会自动更改选择。
 5. 填写设备名称并点击“生成配对二维码”。
 6. 在 iOS 客户端打开“设备认证”，扫描二维码。
 7. WebUI 的可信设备显示“在线”后即完成。
@@ -183,9 +185,23 @@ http://127.0.0.1:<本地端口>
 
 ## Windows / macOS 家用电脑远程连接
 
-家用电脑通常没有固定公网 IP，不建议配置路由器端口转发。可以使用 Tailscale 长期连接，或使用 Cloudflare Quick Tunnel 临时调试。两种方式都转发到插件专用的 `3081` 端口，不会公开 DSH WebUI。
+家用电脑通常没有固定公网 IP，不建议配置路由器端口转发。Windows / macOS 面板提供两种可选入口：无需账户或域名的 Quick Tunnel，以及使用固定域名的命名 Tunnel。插件会在首次开启时自动下载并校验 Cloudflare 官方 `cloudflared`，保存在当前用户的缓存目录；无需手动安装系统服务。
 
-使用前先启动 `dsh web`，并在“移动设备”面板开启“允许移动设备连接”和“设备鉴权”。
+使用前先启动 `dsh web`。电脑必须保持开机、联网且 DSH 进程运行；休眠或进程退出后外网连接会中断。
+
+### Cloudflare Quick Tunnel（一键临时接入）
+
+在「移动设备 → Cloudflare Tunnel」选择「Quick Tunnel · 无需域名」，点击「一键开启」。面板会在首次运行时下载 `cloudflared`，连接后显示随机的 `wss://<名称>.trycloudflare.com/ws/mobile`，并自动将其填为配对地址。需要在局域网内直连时，将下方“配对连接方式”改为“局域网直连”；Tunnel 可以继续开启。生成二维码，用手机 App 扫码即可。关闭开关会停止隧道；DSH 再次启动时会恢复已开启的 Quick 模式并取得**新的随机地址**。
+
+Quick Tunnel 无需 Cloudflare 账户、Token 或自己的公网域名，但地址在 DSH 重启或隧道重连后可能变化。手机 App 只信任已确认的地址，因此地址变化后需在面板重新生成二维码并扫码更新配对；**仅凭 PC 在线不能保证旧地址继续可用**。Cloudflare 将 Quick Tunnel 定位于测试和开发，当前有并发请求上限且不提供可用性保证。参见 [Cloudflare Quick Tunnel 文档](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/trycloudflare/)。
+
+### Cloudflare 命名 Tunnel（固定地址）
+
+1. 在 [Cloudflare 控制台创建远程管理的 Tunnel](https://developers.cloudflare.com/tunnel/get-started/)，添加一个公开域名（例如 `gateway.example.com`），将该路由的 **Service URL** 设为 `http://127.0.0.1:3082`。无需安装 Cloudflare 系统服务，也无需开放路由器入站端口。
+2. 从 Tunnel 的「Add a replica」安装命令中复制 Token，在 DSH「移动设备 → Cloudflare Tunnel」选择「命名 Tunnel · 固定域名」，输入公开域名和 Token 后开启。插件会将网关设为常驻模式，启动本机专用入口和 `cloudflared`。面板显示「已连接 Cloudflare」后使用自动填入的 `wss://gateway.example.com/ws/mobile` 生成配对二维码。
+3. 以后启动 `dsh web` 会自动恢复已开启的 Tunnel；在面板点击「关闭 Cloudflare Tunnel」会停止插件管理的 `cloudflared` 并关闭本机专用入口。若手动关闭网关，Tunnel 会暂停，重新开启网关后恢复。
+
+两种 Cloudflare 入口都只接受 `/ws/mobile` WebSocket，其他 HTTP 路径（包括 DSH WebUI 和 `/mgw` 管理接口）返回 404；设备凭证始终必需，即使本机 Debug 鉴权被关闭也一样。命名 Tunnel 的 Token 保存在 `<deviceFile>.cloudflare.json`（默认 `~/.dsh/mobile-gateway-devices.json.cloudflare.json`），权限为 `0600`，不会返回给浏览器。默认使用 DSH 私有的 `cloudflared-bin` 缓存，不读取系统或其他 App 的 `cloudflared`；每次启动 Tunnel 都校验缓存文件，只有缓存缺失或损坏时才下载固定版本并核对 Cloudflare 官方发布资产的 SHA-256。仅在显式配置 `cloudflaredPath` 时使用外部程序。使用自定义 `cloudflarePort` 时，命名 Tunnel 路由的 Service URL 端口也要相应修改。
 
 ### Tailscale（推荐长期使用）
 
@@ -201,20 +217,6 @@ tailscale serve --bg 3081
 
 Tailscale Serve 只允许同一 Tailnet 中符合访问规则的设备连接，并自动提供 HTTPS。可用 `tailscale serve reset` 停止转发。参见 [Tailscale Serve 文档](https://tailscale.com/docs/reference/tailscale-cli/serve)。
 
-### Cloudflare Quick Tunnel（仅临时调试）
-
-1. 安装 [cloudflared](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/)。
-2. 在 Windows PowerShell 或 macOS 终端执行：
-
-```bash
-cloudflared tunnel --url http://127.0.0.1:3081
-```
-
-3. 命令行会显示随机的 `https://<随机名称>.trycloudflare.com` 地址。
-4. 将地址改为 `wss://<随机名称>.trycloudflare.com/ws/mobile`，填入 WebUI 的“WebSocket 地址”，再生成二维码配对。
-
-保持该命令运行；停止命令后隧道立即失效。Quick Tunnel 的地址每次可能变化，且没有可用性保证，不适合正式或长期使用。公网调试时必须保持“设备鉴权”开启。参见 [Cloudflare Quick Tunnel 文档](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/trycloudflare/)。
-
 ## 网关配置方式总览
 
 | 使用场景 | 推荐入口 | iOS WebSocket 地址 | 需要的额外配置 | 端口与鉴权 |
@@ -222,7 +224,9 @@ cloudflared tunnel --url http://127.0.0.1:3081
 | 同一局域网 | 插件局域网入口 | `ws://<电脑局域网 IP>:3081/ws/mobile` | 无需 Helper 或 Nginx；电脑与 iPhone 位于可互访的局域网 | 仅对私有网络放行 TCP `3081`；保持鉴权开启 |
 | 本机 iOS 模拟器 | DSH WebUI 本地入口 | `ws://127.0.0.1:<DSH WebUI 端口>/ws/mobile` | 无需 Helper、Nginx 或独立的 `3081` 端口 | 不开放任何外部端口；仅 Debug 时可关闭鉴权 |
 | Linux 公网服务器 | 插件 Helper + Nginx + TLS | `wss://<服务器公网 IPv4>/ws/mobile` | 执行 `init`，再从 WebUI 填写公网 IPv4 | 云安全组放行 TCP `80/443`；不要公开 DSH 端口和 `3081`；必须鉴权 |
-| 家用 Windows / macOS | Tailscale Serve；临时调试可用 Quick Tunnel | `wss://<Tailscale 域名>/ws/mobile` 或 `wss://<随机名称>.trycloudflare.com/ws/mobile` | 隧道转发到 `127.0.0.1:3081`，将生成的地址填入 WebUI | 无需路由器端口转发；保持鉴权开启 |
+| 家用 Windows / macOS | Cloudflare 命名 Tunnel | `wss://<公开域名>/ws/mobile` | 在 Cloudflare 建立公开域名到 `127.0.0.1:3082` 的路由；面板填写域名与 Token 并开启 | 无需路由器端口转发；独立入口强制设备鉴权 |
+| 家用 Windows / macOS | Cloudflare Quick Tunnel | `wss://<随机名称>.trycloudflare.com/ws/mobile` | 面板一键开启；重启或重连后地址变化需重新扫码 | 无需域名、账户或端口转发；独立入口强制设备鉴权 |
+| 家用 Windows / macOS | Tailscale Serve | `wss://<Tailscale 域名>/ws/mobile` | 手动转发到 `127.0.0.1:3081`，将生成的地址填入 WebUI | 无需路由器端口转发；保持鉴权开启 |
 
 ## Linux 服务器公网入口管理
 
@@ -269,6 +273,10 @@ sudo env "PATH=$PATH" npx --yes dsh-plugin-mobile-gateway@latest remove-helper
 | iOS 收到 `401` | 在 WebUI 重新生成二维码并配对 |
 | Linux 服务器公网连接超时 | 检查云安全组、服务器防火墙和 TCP `80/443` |
 | Linux 服务器公网地址没有显示 | 在“移动设备 → 公网接入”填写公网 IPv4 并点击更新 |
+| Cloudflare 下载失败 | 检查 PC 到 GitHub Releases 的连接；也可自行安装 cloudflared，并把 `cloudflaredPath` 设为可执行文件的绝对路径 |
+| Quick Tunnel 重启后 App 无法连接 | Quick 地址可能已变化，在面板重新生成二维码并让 App 扫码更新配对；需要固定地址时改用命名 Tunnel |
+| Quick Tunnel 未能启动且 PC 已有 Cloudflare 配置 | Cloudflare 当前不支持 Quick Tunnel 与 `~/.cloudflared/config.yaml` 共用该配置目录；检查面板错误并按 [官方说明](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/trycloudflare/) 处理 |
+| Cloudflare 已连接但 App 无法访问 | 确认公开域名路由的 Service URL 是面板显示的 `http://127.0.0.1:<端口>`，并检查 DNS 与设备配对凭证 |
 | 需要查看服务端日志 | 执行 `tail -f /tmp/mobile-gateway.log` |
 
 ## 源码开发
@@ -278,4 +286,4 @@ dsh plugin --profile web add file:/absolute/path/to/dsh-plugin-mobile-gateway
 npm test
 ```
 
-源码修改后需要重新安装插件并重启 `dsh web`。
+面板右上角“工具”菜单提供“重启当前网关”和“停止 DSH Web”。重启只在通过 `dsh web` 启动时可用，会结束当前 Web 进程并沿用原启动参数重新运行；重启时自动加入 `--no-open`，不会再打开新的浏览器标签页，当前标签页会等待恢复并刷新。重启后的进程在后台运行，不再由原 Terminal 前台任务管理；需要关闭时可在同一菜单点击“停止 DSH Web”，或在 Terminal 找到监听 Web 端口的 DSH 进程并发送 `SIGTERM`。重启期间连接会短暂中断，Quick Tunnel 的外网地址可能随之改变。源码修改后需重新安装插件并重启 `dsh web`。
