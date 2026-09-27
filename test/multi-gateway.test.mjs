@@ -40,7 +40,7 @@ async function start(name, overrides = {}) {
       async stream(req) {
         return (async function* () {
           yield { type: 'baseline', value: req.namespace === 'workspace'
-            ? { items: [], archivedSessionIds: [] } : { queues: {}, jobs: {}, projections: {} } }
+            ? { items: [], archivedSessionIds: [] } : { projections: {} } }
           while (!req.signal.aborted) await delay(5)
         })()
       },

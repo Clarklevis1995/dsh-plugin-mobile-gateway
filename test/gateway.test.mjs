@@ -144,10 +144,17 @@ function fakeApi() {
       async providers() { return { rpcId: 'r', result: { ok: true, value: { providers: [{ provider: 'deepseek', displayName: 'DeepSeek', declared: true }] } } } },
     },
     agentPresets: {
-      async list() { return { rpcId: 'r', result: { ok: true, value: { presets: [{ id: 'standard', isDefault: true }, { id: 'minimal', isDefault: false }], modeSelectionEnabled: true } } } },
+      async list() { return { rpcId: 'r', result: { ok: true, value: { presets: [{ id: 'standard', isDefault: true }, { id: 'minimal', isDefault: false }] } } } },
     },
     permissionPresets: {
       async catalog() { return { rpcId: 'r', result: { ok: true, value: { options: [{ value: 'ask', name: 'Ask' }, { value: 'workspace-write', name: 'Workspace Write' }], defaultOptions: [{ value: 'ask', name: 'Ask' }, { value: 'code', name: 'Code' }], defaultPreset: 'ask' } } } },
+    },
+    schedule: {
+      async catalog() { return { rpcId: 'r', result: { ok: true, value: { items: [{ id: 'reminder-1', sessionId: 's1', status: 'active', kind: 'every', title: '检查构建', prompt: '检查构建状态', everySeconds: 300, scheduledAt: '2099-01-01T00:00:00.000Z' }] } } } },
+      async list() { return { rpcId: 'r', result: { ok: true, value: { items: [{ id: 'reminder-1', kind: 'every', title: '检查构建', prompt: '检查构建状态', everySeconds: 300, scheduledAt: '2099-01-01T00:00:00.000Z' }] } } } },
+      async history() { return { rpcId: 'r', result: { ok: true, value: { id: 'reminder-1', records: [], earlierRecordsUnavailable: false, earlierRecordsPruned: false, retention: { days: 30, records: 200 } } } } },
+      async update(req) { return { rpcId: 'r', result: { ok: true, value: { id: req.payload.id, updated: true, record: { ...req.payload.expected, title: req.payload.title ?? req.payload.expected.title } } } } },
+      async delete(req) { return { rpcId: 'r', result: { ok: true, value: { id: req.payload.id, deleted: true } } } },
     },
     workspace: {
       async list() { return { rpcId: 'r', result: { ok: true, value: { items: [], archivedSessionIds: [] } } } },
@@ -298,6 +305,10 @@ ctx.typertGateway = {
     if (req.namespace === 'skills' && req.method === 'list') return unwrap(api.skills.list)
     if (req.namespace === 'agentPresets' && req.method === 'list') return unwrap(api.agentPresets.list, {})
     if (req.namespace === 'permissionPresets' && req.method === 'catalog') return unwrap(api.permissionPresets.catalog, {})
+    if (req.namespace === 'schedule') {
+      const value = await unwrap(api.schedule[req.method], req.args.request ?? {})
+      return req.method === 'catalog' || req.method === 'list' ? value.items : value
+    }
     if (req.namespace === 'llm' && req.method === 'listConfigurableProviders') {
       return (await unwrap(api.llm.providers, {})).providers
     }
@@ -358,11 +369,12 @@ ctx.typertGateway = {
         yield {
           type: 'baseline',
           value: {
-            queues: {
-              s1: [{ id: 'message-1', placement: 'queued', rpcId: 'prompt-1', message: { id: 'message-1', content: [{ type: 'text', text: '原消息' }] } }],
+            projections: {
+              s1: { asOfSeq: 92, values: { inbox: {
+                'next-turn': [{ id: 'message-1', role: 'user', source: { kind: 'user', rpcId: 'prompt-1' }, content: [{ type: 'text', text: '原消息' }] }],
+                'next-step': [],
+              } } },
             },
-            jobs: {},
-            projections: {},
           },
         }
         while (!req.signal.aborted) {
@@ -534,6 +546,8 @@ function waitFor(pred, timeout) { return new Promise((res) => { const t0 = Date.
     try {
       assert.equal(await waitFor(() => controls.some(f => f.kind === 'hello') && conversations.some(f => f.kind === 'hello'), 2000), true)
       assert.equal(controls.find(f => f.kind === 'hello').capabilities.includes('split-channels'), true)
+      assert.equal(controls.find(f => f.kind === 'hello').capabilities.includes('schedule-management'), true)
+      assert.equal(controls.find(f => f.kind === 'hello').dshVersion, '0.1.7-rc.2')
       conversation.send(JSON.stringify({ type: 'subscribe', sessionId: 's1' }))
       assert.equal(await waitFor(() => conversations.some(f => f.kind === 'subscribed'), 2000), true)
       listeners['session/event']({ id: 's1' }, { type: 'session/title', seq: 7001, time: Date.now(), data: { title: 'split test' } })
@@ -628,12 +642,14 @@ function waitFor(pred, timeout) { return new Promise((res) => { const t0 = Date.
     toolName: 'bash',
     callId: 'call-1',
     reason: 'escalate sandbox to danger-full-access',
+    displayReason: { en: 'Allow this command?', 'zh-CN': '允许执行此命令？' },
   }
   const approvalOne = listeners['approval/request'](approvalOneRequest, waitForMobileApproval(approvalOneRequest))
   const approvalTwoRequest = {
     agent: { id: 's2' },
     toolName: 'bash',
     reason: 'write outside the workspace',
+    displayReason: { en: 'Allow writing outside the workspace?', 'zh-CN': '允许写入工作区以外的位置？' },
   }
   const approvalTwo = listeners['approval/request'](approvalTwoRequest, waitForMobileApproval(approvalTwoRequest))
 
@@ -675,7 +691,7 @@ function waitFor(pred, timeout) { return new Promise((res) => { const t0 = Date.
   const approvalRequestedReady = await waitFor(() => got.filter((m) => m.kind === 'approval-requested').length === 2, 2000)
   const requestedApproval = got.find((m) => m.kind === 'approval-requested' && m.sessionId === 's1')
   const requestedApprovalTwo = got.find((m) => m.kind === 'approval-requested' && m.sessionId === 's2')
-  interactionResults.push(['approval requested on Mobile and offered to WebUI', approvalRequestedReady && requestedApproval && requestedApproval.toolName === 'bash' && requestedApproval.callId === 'call-1' && requestedApproval.reason === 'escalate sandbox to danger-full-access' && approvalDownstreamCalls === 2])
+  interactionResults.push(['approval requested on Mobile and offered to WebUI', approvalRequestedReady && requestedApproval && requestedApproval.toolName === 'bash' && requestedApproval.callId === 'call-1' && requestedApproval.reason === 'escalate sandbox to danger-full-access' && requestedApproval.displayReason['zh-CN'] === '允许执行此命令？' && approvalDownstreamCalls === 2])
 
   const approvalReplayCount = got.filter((m) => m.kind === 'approval-requested' && m.rpcId === requestedApprovalTwo.rpcId).length
   ws.send(JSON.stringify({ type: 'subscribe', sessionId: 's2' }))
@@ -707,7 +723,7 @@ function waitFor(pred, timeout) { return new Promise((res) => { const t0 = Date.
       ), 2000)
       const replayedApproval = controls.filter(frame => frame.kind === 'approval-requested' && frame.rpcId === requestedApprovalTwo.rpcId).at(-1)
       const replayedQuestion = controls.filter(frame => frame.kind === 'question-requested' && frame.rpcId === requestedTwo.rpcId).at(-1)
-      interactionResults.push(['split-channel Session reopen restores question and approval on control lane', restored && replayedApproval?.replay === true && replayedQuestion?.replay === true])
+      interactionResults.push(['split-channel Session reopen restores question and approval on control lane', restored && replayedApproval?.replay === true && replayedApproval.displayReason['zh-CN'] === '允许写入工作区以外的位置？' && replayedQuestion?.replay === true])
     } finally {
       conversation.terminate()
       control.terminate()
@@ -786,21 +802,35 @@ function waitFor(pred, timeout) { return new Promise((res) => { const t0 = Date.
       seq: 94,
   })
   controlFrames.push({
-    type: 'queue',
+    type: 'projection',
     sessionId: 's1',
-    items: [{ id: 'message-1', placement: 'queued', rpcId: 'prompt-1', message: { id: 'message-1', content: [{ type: 'text', text: 'WebUI 修改后' }] } }],
+    key: 'inbox',
+    value: {
+      'next-turn': [{ id: 'message-1', role: 'user', source: { kind: 'user', rpcId: 'prompt-1' }, content: [{ type: 'text', text: 'WebUI 修改后' }] }],
+      'next-step': [
+        { id: 'message-2', role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: '立即处理' }] },
+        { id: 'message-3', role: 'user', source: { kind: 'tool' }, content: [{ type: 'text', text: '上下文' }] },
+      ],
+    },
+    seq: 95,
   })
   const tasksUpdated = await waitFor(() => got.some((m) => m.kind === 'tasks-updated' && m.asOfSeq === 93), 2000)
   const goalUpdated = await waitFor(() => got.some((m) => m.kind === 'goal-updated' && m.asOfSeq === 94), 2000)
   const queueUpdated = await waitFor(() => got.some((m) => m.kind === 'session-queue' && m.sessionId === 's1' && m.items[0]?.message.content[0]?.text === 'WebUI 修改后'), 2000)
   interactionResults.push(['live task projection', tasksUpdated && got.find((m) => m.kind === 'tasks-updated' && m.asOfSeq === 93).todos[0].status === 'completed'])
   interactionResults.push(['live goal projection', goalUpdated && got.find((m) => m.kind === 'goal-updated' && m.asOfSeq === 94).goal.goal.phase === 'paused'])
-  interactionResults.push(['live session queue update', queueUpdated])
+  interactionResults.push(['live session queue update', queueUpdated && (() => {
+    const items = got.find((m) => m.kind === 'session-queue' && m.items[0]?.message.content[0]?.text === 'WebUI 修改后').items
+    return items[1].placement === 'steering' && items[2].placement === 'context' && items[2].rpcId === undefined
+  })()])
 
-  controlFrames.push({ type: 'baseline', value: { queues: {}, jobs: {}, projections: {
+  controlFrames.push({ type: 'projection', sessionId: 's1', key: 'inbox', value: { 'next-turn': [], 'next-step': [] }, seq: 96 })
+  assert.equal(await waitFor(() => got.some(frame => frame.kind === 'session-queue' && frame.sessionId === 's1' && frame.items.length === 0), 2000), true)
+  controlFrames.push({ type: 'baseline', value: { projections: {
     s1: { asOfSeq: 94, values: { todos: [], goal: null } },
   } } })
   assert.equal(await waitFor(() => got.some(frame => frame.kind === 'projection-baseline' && frame.projections.s1?.values.goal === null), 2000), true)
+  assert.equal(await waitFor(() => got.some(frame => frame.kind === 'session-queues' && !('s1' in frame.queues)), 2000), true)
   assert.equal(await waitFor(() => got.some(frame => frame.kind === 'goal-updated' && frame.goal === null && frame.asOfSeq === 94), 2000), true)
   interactionResults.push(['control reconnect restores projection baseline', true])
   workspaceFrames.push({ type: 'archived', archivedSessionIds: ['s1'] })
@@ -912,9 +942,12 @@ function waitFor(pred, timeout) { return new Promise((res) => { const t0 = Date.
   const compactSummary = got.find((m) => m.kind === 'event' && m.seq === 90)
   const commandDone = got.find((m) => m.kind === 'event' && m.seq === 91)
   interactionResults.push(['live command lifecycle', commandEventsReady && commandRun.event.name === 'compact' && commandRun.event.commandId === 'cmd-compact' && compactSummary.event.shadowedItemCount === 3 && compactSummary.event.shadowedTokenCount === 7230 && commandDone.event.outcome === 'success' && commandDone.event.sourceEventSeq === 90])
+  listeners['schedule/changed']()
+  interactionResults.push(['schedule change asks Mobile to refetch', await waitFor(() => got.some((m) => m.kind === 'schedule-changed'), 2000)])
   for (const [name, pass] of interactionResults) console.log((pass ? 'PASS ' : 'FAIL ') + name)
 
   const deepseekChatOptionId = Buffer.from(JSON.stringify(['deepseek', 'deepseek-chat']), 'utf8').toString('base64url')
+  const scheduleRecord = { id: 'reminder-1', kind: 'every', title: '检查构建', prompt: '检查构建状态', everySeconds: 300, scheduledAt: '2099-01-01T00:00:00.000Z' }
   const cases = [
     ['workspaces', { type: 'workspaces' }, (m) => m.kind === 'workspaces'],
     ['sessions Unicode preview', { type: 'sessions' }, (m) => m.kind === 'sessions' && m.items[0].projections.values.turnOutline[0].response === '鼓掌 �…' && m.items[0].projections.values.turnOutline[0].prompt === '👏'],
@@ -965,6 +998,13 @@ function waitFor(pred, timeout) { return new Promise((res) => { const t0 = Date.
     ['select-model', { type: 'select-model', sessionId: 's1', provider: 'deepseek', model: 'deepseek-chat', reasoningEffort: 'high' }, (m) => m.kind === 'select-model' && m.selected.reasoningEffort === 'high'],
     ['select-model missing field', { type: 'select-model', sessionId: 's1', provider: 'deepseek' }, (m) => m.kind === 'error' && m.code === 'bad-request'],
     ['permission-options', { type: 'permission-options', sessionId: 's1' }, (m) => m.kind === 'permission-options' && m.namespace.ns === 'permission' && m.sessionPermissions?.currentValue === 'ask' && m.sessionPermissions.options[0].value === 'ask' && m.defaultOptions[1].value === 'code'],
+    ['schedule catalog', { type: 'schedule-catalog' }, (m) => m.kind === 'schedule-catalog' && m.items[0].sessionId === 's1' && m.items[0].status === 'active' && invokeCalls.some((c) => c.namespace === 'schedule' && c.method === 'catalog' && Object.keys(c.args).length === 0)],
+    ['schedule list', { type: 'schedule-list', sessionId: 's1' }, (m) => m.kind === 'schedule-list' && m.sessionId === 's1' && m.items[0].kind === 'every' && invokeCalls.some((c) => c.namespace === 'schedule' && c.method === 'list' && c.args.request.sessionId === 's1')],
+    ['schedule history', { type: 'schedule-history', sessionId: 's1', id: 'reminder-1', limit: 20, before: 'message-1' }, (m) => m.kind === 'schedule-history' && m.id === 'reminder-1' && m.records.length === 0 && invokeCalls.some((c) => c.namespace === 'schedule' && c.method === 'history' && c.args.request.limit === 20 && c.args.request.before === 'message-1')],
+    ['schedule history invalid limit', { type: 'schedule-history', sessionId: 's1', id: 'reminder-1', limit: 101 }, (m) => m.kind === 'error' && m.code === 'bad-request' && m.requestType === 'schedule-history'],
+    ['schedule update', { type: 'schedule-update', sessionId: 's1', id: 'reminder-1', expected: { ...scheduleRecord, sessionId: 's1', status: 'active' }, title: '检查新构建', requestId: 'edit-1' }, (m) => m.kind === 'schedule-update' && m.requestId === 'edit-1' && m.record.title === '检查新构建' && invokeCalls.some((c) => c.namespace === 'schedule' && c.method === 'update' && c.args.request.expected.id === 'reminder-1' && !('status' in c.args.request.expected) && !('sessionId' in c.args.request.expected) && c.args.request.title === '检查新构建')],
+    ['schedule update mismatched record', { type: 'schedule-update', sessionId: 's1', id: 'reminder-1', expected: { ...scheduleRecord, id: 'other' } }, (m) => m.kind === 'error' && m.code === 'bad-request' && m.requestType === 'schedule-update'],
+    ['schedule delete', { type: 'schedule-delete', sessionId: 's1', id: 'reminder-1' }, (m) => m.kind === 'schedule-delete' && m.deleted === true && invokeCalls.some((c) => c.namespace === 'schedule' && c.method === 'delete' && c.args.request.id === 'reminder-1')],
     ['permission', { type: 'permission', sessionId: 's1', name: 'code' }, (m) => m.kind === 'permission' && m.set === 'code' && m.commandId === 'cmd-1' && invokeCalls.some((c) => c.namespace === 'commands' && c.method === 'execute' && c.args.line === '/permission code' && c.args.agentId === 's1' && Array.isArray(c.args.submittedAttachments) && c.args.submittedAttachments.length === 0 && !('agent' in c.args)) && api.promptCalls.length === 0],
     ['permission missing name', { type: 'permission', sessionId: 's1' }, (m) => m.kind === 'error' && m.code === 'bad-request'],
     ['permission unknown command', { type: 'permission', sessionId: 's1', name: 'missing' }, (m) => m.kind === 'error' && m.code === 'unknown-command'],

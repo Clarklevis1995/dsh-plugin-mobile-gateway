@@ -74,7 +74,7 @@ async function waitForLanStatus(base) {
             while (!request.signal.aborted) await new Promise((resolve) => setTimeout(resolve, 5))
           }
           if (request.namespace === 'session' && request.method === 'control') {
-            yield { type: 'baseline', value: { queues: {}, jobs: {}, projections: {} } }
+            yield { type: 'baseline', value: { projections: {} } }
             while (!request.signal.aborted) await new Promise((resolve) => setTimeout(resolve, 5))
           }
         })()

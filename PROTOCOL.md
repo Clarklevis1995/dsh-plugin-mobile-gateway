@@ -1,6 +1,6 @@
 # dsh Mobile Gateway — WebSocket 协议参考
 
-移动端通过经过设备鉴权的 WebSocket 连接与 dsh 通信：订阅 agent 实时输出、发送文字和图片、处理 Human-in-the-loop 提问与操作审批、查询会话/工作区/历史、调整会话配置。本协议由持久化插件 `dsh-plugin-mobile-gateway` 实现。当前源码适配 DSH 0.1.7-rc.1 / Session format 4；移动端实时流接入见 [rc.2 接入说明](docs/dsh-rc2-mobile-integration.md)。
+移动端通过经过设备鉴权的 WebSocket 连接与 dsh 通信：订阅 agent 实时输出、发送文字和图片、处理 Human-in-the-loop 提问与操作审批、查询会话/工作区/历史、调整会话配置。本协议由持久化插件 `dsh-plugin-mobile-gateway` 实现。当前源码适配 DSH 0.1.7-rc.2 / Session format 4；移动端实时流接入见 [rc.2 接入说明](docs/dsh-rc2-mobile-integration.md)。
 
 - **本机端点**：`ws://127.0.0.1:3080/ws/mobile`（与 dsh web GUI 同端口）
 - **局域网端点**：`ws://<电脑的私有局域网 IP>:3081/ws/mobile`（插件独立监听，只提供经过鉴权的 WebSocket）
@@ -319,6 +319,7 @@ waterfall，并向移动端投影为 `approval-requested`，同时保留 WebUI a
   "toolName": "bash",
   "callId": "call-42",
   "reason": "escalate sandbox to danger-full-access",
+  "displayReason": { "en": "Allow this command?", "zh-CN": "允许执行此命令？" },
   "replay": true
 }
 ```
@@ -326,7 +327,8 @@ waterfall，并向移动端投影为 `approval-requested`，同时保留 WebUI a
 - `rpcId`：本次可回答请求的稳定 RPC ID；提交决定时必须原样返回。
 - `approvalId`：移动网关生成的本次审批关联 ID；同样必须原样返回，并用于将最终状态关联到本地审批卡片。
 - `toolName`：请求审批的工具名。
-- `callId` / `reason`：可选。前者可关联工具调用，后者应直接显示为待审批原因。
+- `callId` / `reason`：可选。前者可关联工具调用，后者是原始审批说明。
+- `displayReason`：rc.2 新增的可选多语言说明；客户端优先按当前语言显示，缺失时回退到 `reason`。该字段也会随待处理请求重放。
 - `replay: true`：表示当前仍未决定的审批在移动端连接或切换 Session 后重放。客户端应按 `rpcId` 去重。
 
 审批请求不含工具完整参数；移动端应将 `reason` 与可见的工具调用轨迹作为展示依据，不应自行推断或构造命令。
@@ -568,7 +570,7 @@ let image = [
 
 ### 排队消息同步与修改
 
-`hello.capabilities` 包含 `queue-control` 时，控制连接会收到 Host 当前待处理消息。连接初始化或 Host 控制流重连后，网关发送完整快照：
+`hello.capabilities` 包含 `queue-control` 时，控制连接会收到 Host 当前待处理消息。DSH 0.1.7-rc.1 从 `session/control` 的 `projections.values.inbox` 提供待处理消息：`next-turn` 映射为 `queued`，`next-step` 按来源映射为 `steering` 或 `context`。连接初始化或 Host 控制流重连后，网关发送完整快照：
 
 ```json
 {
@@ -589,7 +591,7 @@ let image = [
 }
 ```
 
-之后某个 Session 的队列发生变化时，网关发送该 Session 的完整替换值：
+之后某个 Session 的 `inbox` 投影发生变化时，网关发送该 Session 的完整替换值：
 
 ```json
 { "kind": "session-queue", "sessionId": "session-abc", "items": [] }
@@ -983,6 +985,8 @@ WebUI 中的“任务”与“进行中的目标”分别对应 DSH 的 `todos` 
 → { "kind": "set-default", "target": "agent-preset", "value": "minimal", "applied": true }
 ```
 
+DSH 0.1.7-rc.2 的 Agent preset 名册不再包含 `modeSelectionEnabled`。网关在字段缺失时仍允许移动端选择和保存默认模式；旧版 Host 明确返回 `false` 时沿用其禁用语义。这个移动端字段不代表桌面端「代码工作工具」的本地开关状态。
+
 ### 当前会话模式选择
 
 `hello.capabilities` 包含 `session-agent-preset` 时，可以进入已创建的空白会话后选模式。
@@ -1029,7 +1033,7 @@ Control/旧单连接接收全局模式状态增量，不受所订阅会话过滤
 ## 11. 分支（fork）
 
 ```json
-{ "type": "fork", "sessionId": "session-abc", "atSeq": 42, "historyFormatVersion": 3 }
+{ "type": "fork", "sessionId": "session-abc", "atSeq": 42, "historyFormatVersion": 4 }
 → { "kind": "fork", "sessionId": "session-分支新会话" }
 ```
 - `atSeq`：从该消息所在的**完整一轮**分叉（省略 = 最近完成的 turn）；进行中的 turn 分叉会报 `fork-unavailable`
@@ -1062,6 +1066,7 @@ Control/旧单连接接收全局模式状态增量，不受所订阅会话过滤
 | `session-archives` | Host 的完整 Session 归档集合在连接初始化或 WebUI/App 归档后变化 |
 | `session-title-changed` | 任意客户端写入新的持久化 Session 名称 |
 | `tasks-updated` / `goal-updated` | 当前会话的任务列表或目标 projection 发生变化 |
+| `schedule-changed` | Host 定时任务目录已变化；无载荷，重新请求 `schedule-catalog` 或当前 Session 的 `schedule-list` |
 | `question-requested` / `question-resolved` | Human-in-the-loop 问题请求与最终状态 |
 | `approval-requested` / `approval-resolved` | Human-in-the-loop 操作审批请求与最终状态 |
 | `pong` / `subscribed` / `sent` | 对应请求的回复 |
@@ -1140,6 +1145,24 @@ Control/旧单连接接收全局模式状态增量，不受所订阅会话过滤
 | v0.6.9 | 服务端驱动的命令与技能目录：支持本地化 Hint、通用二级选项、专用命令执行，以及 command/compaction 生命周期事件；Host 命令不再作为用户 Prompt 发送 |
 | v0.7.0 | 任务与 Goal 对齐：任务/Goal 基线查询、`todos`/`goal` 实时投影、Goal 改名、暂停、继续与删除 |
 | v0.7.1 | DSH v0.1.2-rc.1 兼容：内部迁移至 Remote Gateway 与 Host waterfall，移除 APIProxy 依赖；`dsh-mobile-v1` 保持不变 |
+
+---
+
+## 17. 定时任务（DSH 0.1.7-rc.2）
+
+以下请求走控制连接，网关映射到 Host `schedule` Remote namespace。Host 未启用定时任务时返回统一的 `kind: error`，`requestType` 保留原请求类型。定时任务与第 6 节的 Session `todos` 是不同的数据源。
+
+| 请求 type | 参数 | 成功响应 |
+|---|---|---|
+| `schedule-catalog` | — | `kind: schedule-catalog`, `items`: 全宿主活动与已结束提醒，包含原 `sessionId`、`status` 和可选最近投递回执 |
+| `schedule-list` | `sessionId` | `kind: schedule-list`, `sessionId`, `items`: 当前会话活动提醒 |
+| `schedule-history` | `sessionId`, `id`, `limit` 1–100, `before?` | `kind: schedule-history`, `records`（从新到旧）、`retention`、`nextBefore?`；任务或游标未找到时在成功帧中返回 `code` |
+| `schedule-update` | `sessionId`, `id`, 完整的 `expected`, `title?`, `prompt?`, `change?`, `requestId?` | `kind: schedule-update`, `updated`, `record`；并发冲突、已结束或未找到时返回 `updated:false` 与 `code` |
+| `schedule-delete` | `sessionId`, `id`, `requestId?` | `kind: schedule-delete`, `deleted`；未找到时返回 `deleted:false` 与 `code` |
+
+`expected` 必须是编辑前从 `schedule-list` 或 `schedule-catalog` 取得的完整任务记录，`id` 必须匹配；不要只传 id 或重建部分字段。网关会去掉目录行额外的 `sessionId`、`status`、`lastDelivery` 元数据后调用 Host。`change` 使用 Host 的 `at`、`every`、`daily`、`weekly`、`cron` 判别结构。更新与删除只对原会话绑定生效；`requestId` 若提供会原样回显。删除会同时移除该任务的投递记录，不撤回已入队的消息。
+
+rc.2 没有 `schedule/create` Remote 方法。新提醒由 Agent 的 `schedule_create` 工具创建；到期提醒作为 `source.kind: schedule` 的消息进入原 Session。Host 的无载荷 `schedule/changed` 被投影为移动端 `schedule-changed`；实现定时任务管理页面的客户端应在收到通知、重连或完成更新/删除后重新查询目录。当前移动端只接入协议请求、解码与变更帧识别，尚未提供管理页面。`hello.capabilities` 中的 `schedule-management` 表示网关支持这些请求，实际使用仍取决于 Host 是否启用定时任务。
 
 ---
 
