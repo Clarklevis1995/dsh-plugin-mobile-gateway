@@ -36,6 +36,7 @@ let acceptedUpgrades = 0
 const create = () => createCloudflareTunnel({
   file, port, wsPath: '/ws/mobile', supported: true, spawnProcess,
   prepareExecutable: async () => '/fake/cloudflared',
+  probeEndpoint: async () => ({ state: 'reachable', message: 'mock route verified' }),
   isGatewayEnabled: () => gatewayEnabled,
   onUpgrade: (_req, socket, _head, transport) => {
     acceptedUpgrades += 1
