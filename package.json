@@ -1,7 +1,7 @@
 {
   "name": "dsh-plugin-mobile-gateway",
-  "version": "0.8.1",
-  "description": "Authenticated mobile gateway for DeepSeek Harness with LAN and Cloudflare Tunnel access, device pairing, and session sync",
+  "version": "0.9.0",
+  "description": "Authenticated mobile gateway for DeepSeek Harness with realtime session sync, device pairing, plugin management, and LAN or Cloudflare Tunnel access",
   "main": "lib/index.mjs",
   "files": [
     "bin",
@@ -26,7 +26,7 @@
   },
   "bin": "bin/setup-ip.mjs",
   "scripts": {
-    "test": "node test/wire-json.test.mjs && node test/setup-ip.test.mjs && node test/host-adapter.test.mjs && node test/session-preset.test.mjs && node test/session-follower.test.mjs && node test/gateway.test.mjs && node test/auth.test.mjs && node test/lan.test.mjs && node test/cloudflared-binary.test.mjs && node test/cloudflare-tunnel.test.mjs && node test/gateway-tools.test.mjs && node test/multi-gateway.test.mjs"
+    "test": "node test/wire-json.test.mjs && node test/setup-ip.test.mjs && node test/host-adapter.test.mjs && node test/plugin-management.test.mjs && node test/session-preset.test.mjs && node test/session-follower.test.mjs && node test/gateway.test.mjs && node test/auth.test.mjs && node test/lan.test.mjs && node test/cloudflared-binary.test.mjs && node test/cloudflare-tunnel.test.mjs && node test/gateway-tools.test.mjs && node test/multi-gateway.test.mjs"
   },
   "exports": {
     ".": "./lib/index.mjs",

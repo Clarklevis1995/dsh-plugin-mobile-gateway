@@ -6,11 +6,11 @@
 
 DeepSeek Harness 的设备鉴权移动网关，支持会话与实时事件、排队消息同步及编辑/删除/Steer、Session 归档和重命名的双向同步、停止当前生成并稍后继续、任务列表和当前 Goal 同步及管理、服务端驱动的命令和技能菜单、Human-in-the-loop、图片及文件传输。安装后，Harness WebUI 左侧边栏会出现“移动设备”入口，可直接开启网关、生成配对二维码和管理可信设备。
 
-> 当前源码以 **DSH 0.1.7-rc.2** 为适配基线，使用 Session format 4；旧版历史游标需重新取得基线。
+> 当前源码以 **DSH 0.2.0-rc.2** 为适配基线，使用 Session format 4；旧版历史游标需重新取得基线。
 >
 > 实时流已改为独立 `assistant-stream` 帧，移动端需要按 [rc.2 接入说明](docs/dsh-rc2-mobile-integration.md) 更新订阅、缓存与分页处理。当前修改尚未发布。
 >
-> v0.8.1（当前源码）：PC 端可在面板开启 Cloudflare Quick / 命名 Tunnel，使用插件私有缓存中的 `cloudflared` 并校验文件；配对面板增加局域网与外网入口选择指引；工具菜单可重启网关或停止 DSH Web，重启时不再打开新标签页。
+> v0.9.0（当前源码）：新增 DSH 0.2.0-rc.2 插件管理能力；PC 端可在面板开启、重启 Cloudflare Quick / 命名 Tunnel，使用插件私有缓存中的 `cloudflared` 并校验文件；配对面板增加局域网与外网入口选择指引；工具菜单可重启网关或停止 DSH Web，重启时不再打开新标签页。
 >
 > v0.7.3：优化移动网关运行模式下拉框的箭头间距。
 >
@@ -18,7 +18,7 @@ DeepSeek Harness 的设备鉴权移动网关，支持会话与实时事件、排
 
 ## 协议与 DSH 兼容层
 
-移动端连接的是本项目维护的 `dsh-mobile-v1`，不是 DSH 的内部 Remote 协议。插件内部通过独立 Host Adapter 对接 DSH 0.1.7-rc.2 的 Remote Gateway；Session、Workspace、Settings、Commands、Goals、Schedule、Permission Presets 等 namespace 和严格参数只存在于该适配层。
+移动端连接的是本项目维护的 `dsh-mobile-v1`，不是 DSH 的内部 Remote 协议。插件内部通过独立 Host Adapter 对接 DSH 0.2.0-rc.2 的 Remote Gateway；Session、Workspace、Settings、Commands、Goals、Schedule、Permission Presets、Plugin Manager 等 namespace 和严格参数只存在于该适配层。插件管理的请求帧及 DSH Mobile 页面方案见 [RC2 插件管理对接方案](docs/dsh-0.2.0-rc.2-plugin-management-mobile-integration.md)。
 
 配对鉴权和 `dsh-mobile-v1` / `hello.protocol = 3` 保持不变。新版实时 token 不占用持久事件的 `seq`：客户端显式订阅 `assistantStream: true`，接收原子的 `session-snapshot` 和独立增量；普通 `event` 只携带持久事件。未接入新订阅的客户端只能收到持久消息。
 
@@ -194,6 +194,8 @@ http://127.0.0.1:<本地端口>
 在「移动设备 → Cloudflare Tunnel」选择「Quick Tunnel · 无需域名」，点击「一键开启」。面板会在首次运行时下载 `cloudflared`，连接后显示随机的 `wss://<名称>.trycloudflare.com/ws/mobile`，并自动将其填为配对地址。需要在局域网内直连时，将下方“配对连接方式”改为“局域网直连”；Tunnel 可以继续开启。生成二维码，用手机 App 扫码即可。关闭开关会停止隧道；DSH 再次启动时会恢复已开启的 Quick 模式并取得**新的随机地址**。
 
 Quick Tunnel 无需 Cloudflare 账户、Token 或自己的公网域名，但地址在 DSH 重启或隧道重连后可能变化。手机 App 只信任已确认的地址，因此地址变化后需在面板重新生成二维码并扫码更新配对；**仅凭 PC 在线不能保证旧地址继续可用**。Cloudflare 将 Quick Tunnel 定位于测试和开发，当前有并发请求上限且不提供可用性保证。参见 [Cloudflare Quick Tunnel 文档](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/trycloudflare/)。
+
+面板中的“更新 Tunnel 配置”保存所选模式及命名 Tunnel 参数；配置不变时不会重新连接。“重启 Tunnel”会断开当前移动连接并重建 Cloudflare 隧道，不会重启 DSH Web；Quick Tunnel 重启后可能取得新地址，旧二维码会清除，需按新地址重新扫码。此操作不会自动升级 `cloudflared` 到最新版本。
 
 ### Cloudflare 命名 Tunnel（固定地址）
 

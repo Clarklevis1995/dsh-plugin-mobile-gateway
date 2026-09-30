@@ -248,6 +248,7 @@ function expectRejected(url, options = {}) {
     'tasks',
     'goals',
     'schedule-management',
+    'plugin-management-v1',
     'session-cancel',
     'queue-control',
     'session-archive',

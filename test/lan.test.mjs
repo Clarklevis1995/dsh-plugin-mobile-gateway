@@ -228,6 +228,18 @@ async function waitForLanStatus(base) {
     assert.equal(quickStatus.cloudflare.publicUrl, 'wss://sample-quick.trycloudflare.com/ws/mobile')
     assert.equal(quickStatus.publicUrl, quickStatus.cloudflare.publicUrl)
     assert.equal(quickStatus.endpoints.includes(quickStatus.cloudflare.publicUrl), true)
+    const restarted = await fetch(`${base}/mgw/cloudflare/restart`, {
+      method: 'POST', headers: { Origin: base },
+    })
+    assert.equal(restarted.status, 200)
+    assert.equal((await restarted.json()).enabled, true)
+    let reconnected = false
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      const current = await (await fetch(`${base}/mgw/status`)).json()
+      if (current.cloudflare.state === 'online') { reconnected = true; break }
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    }
+    assert.equal(reconnected, true)
     const lanPairResponse = await fetch(`${base}/mgw/pair`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Origin: base },
@@ -246,6 +258,10 @@ async function waitForLanStatus(base) {
     })
     assert.equal(disabled.status, 200)
     assert.equal((await disabled.json()).enabled, false)
+    const rejectedRestart = await fetch(`${base}/mgw/cloudflare/restart`, {
+      method: 'POST', headers: { Origin: base },
+    })
+    assert.equal(rejectedRestart.status, 409)
   }
 
   ws.close()
