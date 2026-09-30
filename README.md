@@ -200,10 +200,18 @@ Quick Tunnel 无需 Cloudflare 账户、Token 或自己的公网域名，但地�
 ### Cloudflare 命名 Tunnel（固定地址）
 
 1. 在 [Cloudflare 控制台创建远程管理的 Tunnel](https://developers.cloudflare.com/tunnel/get-started/)，添加一个公开域名（例如 `gateway.example.com`），将该路由的 **Service URL** 设为 `http://127.0.0.1:3082`。无需安装 Cloudflare 系统服务，也无需开放路由器入站端口。
-2. 从 Tunnel 的「Add a replica」安装命令中复制 Token，在 DSH「移动设备 → Cloudflare Tunnel」选择「命名 Tunnel · 固定域名」，输入公开域名和 Token 后开启。插件会将网关设为常驻模式，启动本机专用入口和 `cloudflared`。面板显示「已连接 Cloudflare」后使用自动填入的 `wss://gateway.example.com/ws/mobile` 生成配对二维码。
+2. 从 Tunnel 的「Add a replica」安装命令中复制 Token，在 DSH「移动设备 → Cloudflare Tunnel」选择「命名 Tunnel · 固定域名」，输入公开域名和 Token 后开启。插件会将网关设为常驻模式，启动本机专用入口和 `cloudflared`。隧道传输连接后，面板会独立检测本机到公网入口的 DNS、TLS 和移动网关路由；检测通过后使用自动填入的 `wss://gateway.example.com/ws/mobile` 生成配对二维码。
 3. 以后启动 `dsh web` 会自动恢复已开启的 Tunnel；在面板点击「关闭 Cloudflare Tunnel」会停止插件管理的 `cloudflared` 并关闭本机专用入口。若手动关闭网关，Tunnel 会暂停，重新开启网关后恢复。
 
 两种 Cloudflare 入口都只接受 `/ws/mobile` WebSocket，其他 HTTP 路径（包括 DSH WebUI 和 `/mgw` 管理接口）返回 404；设备凭证始终必需，即使本机 Debug 鉴权被关闭也一样。命名 Tunnel 的 Token 保存在 `<deviceFile>.cloudflare.json`（默认 `~/.dsh/mobile-gateway-devices.json.cloudflare.json`），权限为 `0600`，不会返回给浏览器。默认使用 DSH 私有的 `cloudflared-bin` 缓存，不读取系统或其他 App 的 `cloudflared`；每次启动 Tunnel 都校验缓存文件，只有缓存缺失或损坏时才下载固定版本并核对 Cloudflare 官方发布资产的 SHA-256。仅在显式配置 `cloudflaredPath` 时使用外部程序。使用自定义 `cloudflarePort` 时，命名 Tunnel 路由的 Service URL 端口也要相应修改。
+
+#### 公网入口检测与状态含义
+
+`state: online` 只表示 cloudflared 已注册隧道连接，不保证公开域名、TLS 或源站路由可用。状态 API 另外提供 `endpointHealth`（状态、提示、检测时间及错误码）和 `publicReady`。面板在连接后自动检测一次，也可点击「检测公网 DNS / TLS / WebSocket」重试；该按钮调用受现有管理鉴权保护的 `POST /mgw/cloudflare/check`，不会重启隧道。
+
+检测使用本机系统 DNS 和严格证书校验的 HTTPS WebSocket 请求，不携带配对码或设备 Token，不跟随重定向。只有 HTTP 401 且移动网关回显本次随机探测标记时，才确认受鉴权保护的网关路由可达；代理或 Cloudflare Access 的普通 401 不会被当作成功。该标记只在缺少有效设备凭证的拒绝响应中回显，不授予任何访问权限。结果是一次本机网络快照，不保证手机网络、设备鉴权或会话同步成功。
+
+本机解析失败不代表公共 DNS 记录必然不存在：刚创建记录时可能仍有 NXDOMAIN 缓存，也可能受本机 DNS、VPN 或代理影响。核对公开主机名和已代理 CNAME，再稍后重试，不要关闭 TLS 校验。插件目前使用 Tunnel Token 运行远程管理的隧道，该 Token 不会自动创建域名路由或 DNS；具备额外账户授权的 cloudflared CLI / Cloudflare API 可以配置这些资源，但不属于本检测功能。
 
 ### Tailscale（推荐长期使用）
 
