@@ -16,6 +16,16 @@ DeepSeek Harness 的设备鉴权移动网关，支持会话与实时事件、排
 >
 > v0.7.2：新增独立对话/控制连接、空 Session 创建、停止生成与稍后继续、排队消息同步及编辑/删除/Steer，以及 Session 归档和重命名的双向同步。
 
+## Management UI language / 管理界面语言
+
+The gateway sidebar action and management panel support English and Chinese. By default, it follows Harness’s active language through the public locale service, including Settings → General changes. Chinese (`zh`) locales use Chinese; other languages use English. Before the host locale arrives, the browser language supplies the fallback. Use the **EN / 中文** button in the panel header for an explicit plugin override; the choice is saved in this browser’s local storage. **Auto** clears that override and follows the app again. If storage is unavailable, switching still works for the current page. The plugin reads the host locale without changing Harness’s language settings.
+
+This includes gateway modes, device authentication, Cloudflare controls (including restart), Linux public-access setup, connection guidance, QR pairing, trusted-device management, tooltips, and accessibility labels. Existing device names and unknown server diagnostics remain unchanged; missing device names get a localized display fallback. No saved device records are migrated. Language changes update the sidebar, panel, device rows, and notices without changing pairing or network settings. Slot labels use live getters; the host may cache registration metadata, while the visible sidebar and its accessibility label subscribe directly to language changes.
+
+中文和英文翻译基于 [PR #16](https://github.com/Clarklevis1995/dsh-plugin-mobile-gateway/pull/16)，并补充语言切换同步、当前上游的 Tunnel 重启文案与回归测试。默认跟随 Harness 的语言设置；面板右上角可切换并保存插件偏好，选择“自动”可恢复跟随应用语言。已有设备名称保持原样。
+
+Translation dictionaries and management text are adapted from [PR #16](https://github.com/Clarklevis1995/dsh-plugin-mobile-gateway/pull/16), with reactive language switching, current-upstream tunnel restart copy, and regression coverage added here.
+
 ## 协议与 DSH 兼容层
 
 移动端连接的是本项目维护的 `dsh-mobile-v1`，不是 DSH 的内部 Remote 协议。插件内部通过独立 Host Adapter 对接 DSH 0.2.0-rc.2 的 Remote Gateway；Session、Workspace、Settings、Commands、Goals、Schedule、Permission Presets、Plugin Manager 等 namespace 和严格参数只存在于该适配层。插件管理的请求帧及 DSH Mobile 页面方案见 [RC2 插件管理对接方案](docs/dsh-0.2.0-rc.2-plugin-management-mobile-integration.md)。
