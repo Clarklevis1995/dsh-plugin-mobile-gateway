@@ -26,7 +26,7 @@
   },
   "bin": "bin/setup-ip.mjs",
   "scripts": {
-    "test": "node test/wire-json.test.mjs && node test/setup-ip.test.mjs && node test/host-adapter.test.mjs && node test/plugin-management.test.mjs && node test/session-preset.test.mjs && node test/session-follower.test.mjs && node test/gateway.test.mjs && node test/auth.test.mjs && node test/lan.test.mjs && node test/cloudflared-binary.test.mjs && node test/cloudflare-tunnel.test.mjs && node test/gateway-tools.test.mjs && node test/multi-gateway.test.mjs"
+    "test": "node test/client-localization.test.mjs && node test/wire-json.test.mjs && node test/setup-ip.test.mjs && node test/host-adapter.test.mjs && node test/plugin-management.test.mjs && node test/session-preset.test.mjs && node test/session-follower.test.mjs && node test/gateway.test.mjs && node test/auth.test.mjs && node test/lan.test.mjs && node test/cloudflared-binary.test.mjs && node test/cloudflare-tunnel.test.mjs && node test/gateway-tools.test.mjs && node test/multi-gateway.test.mjs"
   },
   "exports": {
     ".": "./lib/index.mjs",
@@ -42,7 +42,8 @@
       "inject": [
         "@deepseek-ai/dsh-client-runtime",
         "@deepseek-ai/dsh-client-ui-layout",
-        "@deepseek-ai/dsh-client-ui-sidebar"
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-client-locale"
       ]
     }
   },
