@@ -389,7 +389,7 @@ security group. Only /ws/mobile will be proxied; the WebUI and /mgw remain priva
 Setup completed.
 
 1. Restart dsh web so the plugin reads ${PUBLIC_URL_FILE}.
-2. Open “移动设备”, enable the gateway, and generate a pairing QR code.
+2. Open “Mobile devices”, enable the gateway, and generate a pairing QR code.
 3. The iOS client should connect to wss://${ip}/ws/mobile.
 
 Check later with:
