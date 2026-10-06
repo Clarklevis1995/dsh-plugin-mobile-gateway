@@ -1,10 +1,16 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import vm from 'node:vm'
+import { EventEmitter } from 'node:events'
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+import { checkPublicEndpoint } from '../lib/public-endpoint-check.mjs'
+import { createCloudflareTunnel } from '../lib/cloudflare-tunnel.mjs'
 
 const source = await readFile(new URL('../lib/client.js', import.meta.url), 'utf8')
 
-function loadClient({ language = 'en-US', hostLocale = language, storage = new Map(), storageThrows = false } = {}) {
+function loadClient({ language = 'en-US', hostLocale = language, storage = new Map(), storageThrows = false, cloudflare } = {}) {
   const registrations = new Map()
   const subscribers = new Set()
   const hookFrames = new Map()
@@ -71,7 +77,7 @@ function loadClient({ language = 'en-US', hostLocale = language, storage = new M
       : path === '/mgw/status'
         ? { platform: 'linux', lan: { listening: true, urls: ['ws://192.0.2.1:8080'] }, gatewayEnabled: true,
           gatewayMode: 'persistent', tools: { restartWeb: true, stopWeb: true }, version: '1.2.3',
-          cloudflare: { supported: true, enabled: true, mode: 'quick', state: 'online', publicUrl: 'wss://quick.example/ws/mobile' } }
+          cloudflare: cloudflare || { supported: true, enabled: true, mode: 'quick', state: 'online', publicUrl: 'wss://quick.example/ws/mobile' } }
         : { configured: false } }
     },
     URL,
@@ -243,4 +249,102 @@ client.click(followHostButton)
 panel = client.renderOverlay()
 assert.equal(client.storage.has('mgw-ui-lang'), false, 'following the app should clear the plugin override')
 assert.equal(client.find(panel, node => node.props.role === 'dialog')?.props['aria-label'], 'Mobile device management', 'follow app should immediately adopt the active host locale')
-console.log('PASS client localization: locale fallback, safe storage, saved override, immediate accessible UI updates, and restart messaging')
+
+// Public endpoint health (PR #18): collect every message the server can emit,
+// then require the English panel to contain no Chinese and the Chinese panel
+// to translate each one, including the HTTP status variant.
+const HAN = /\p{Script=Han}/u
+const lookup = async () => ({ address: '192.0.2.1', family: 4 })
+const mockRequest = ({ status = 401, error, upgrade = false, hang = false, throws = false } = {}) => (options) => {
+  if (throws) throw new Error('request setup failed')
+  const req = new EventEmitter()
+  req.destroy = () => {}
+  req.end = () => queueMicrotask(() => {
+    if (hang) return
+    if (error) return req.emit('error', Object.assign(new Error(), { code: error }))
+    const res = new EventEmitter(); res.statusCode = status; res.headers = { 'x-dsh-gateway-probe': options.headers['X-DSH-Gateway-Probe'] }; res.destroy = () => {}
+    req.emit(upgrade ? 'upgrade' : 'response', res, { destroy() {} })
+  })
+  return req
+}
+const endpoint = 'wss://gateway.example.com/ws/mobile'
+const healthSamples = [
+  await checkPublicEndpoint('http://gateway.example.com'),
+  await checkPublicEndpoint(endpoint, { lookup: async () => { throw Object.assign(new Error(), { code: 'ENOTFOUND' }) } }),
+  await checkPublicEndpoint(endpoint, { lookup: async () => { throw Object.assign(new Error(), { code: 'EAI_AGAIN' }) } }),
+  await checkPublicEndpoint(endpoint, { lookup, request: mockRequest({ hang: true }), timeoutMs: 10 }),
+  await checkPublicEndpoint(endpoint, { lookup, request: mockRequest() }),
+  await checkPublicEndpoint(endpoint, { lookup, request: mockRequest({ status: 502 }) }),
+  await checkPublicEndpoint(endpoint, { lookup, request: mockRequest({ upgrade: true, status: 101 }) }),
+  await checkPublicEndpoint(endpoint, { lookup, request: mockRequest({ error: 'CERT_HAS_EXPIRED' }) }),
+  await checkPublicEndpoint(endpoint, { lookup, request: mockRequest({ error: 'ECONNRESET' }) }),
+  await checkPublicEndpoint(endpoint, { lookup, request: mockRequest({ throws: true }) }),
+]
+{
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'mgw-l10n-test-'))
+  const file = path.join(dir, 'state.json')
+  await fs.writeFile(file, JSON.stringify({ version: 1, enabled: true, mode: 'named', hostname: 'gateway.example.com', token: 'test-token' }))
+  const child = new EventEmitter(); child.stdout = new EventEmitter(); child.stderr = new EventEmitter(); child.kill = () => {}
+  let rejectProbe
+  const tunnel = createCloudflareTunnel({ file, port: 0, wsPath: '/ws/mobile', isGatewayEnabled: () => true, onUpgrade() {},
+    prepareExecutable: async () => 'mock', spawnProcess: () => child, probeEndpoint: () => new Promise((_, reject) => { rejectProbe = reject }) })
+  healthSamples.push(tunnel.snapshot().endpointHealth)
+  await tunnel.reconcile()
+  await new Promise((resolve) => setImmediate(resolve))
+  child.stdout.emit('data', Buffer.from('Registered tunnel connection'))
+  const pending = tunnel.checkEndpoint()
+  healthSamples.push(tunnel.snapshot().endpointHealth)
+  await new Promise((resolve) => setImmediate(resolve))
+  rejectProbe(new Error('probe crashed'))
+  await pending
+  healthSamples.push(tunnel.snapshot().endpointHealth)
+  child.emit('exit', 1, null)
+  healthSamples.push(tunnel.snapshot().endpointHealth)
+  tunnel.dispose()
+  await fs.rm(dir, { recursive: true, force: true })
+}
+assert.deepEqual(new Set(healthSamples.map(({ state }) => state)), new Set(['invalid-url', 'dns-error', 'network-error', 'reachable', 'route-error', 'auth-warning', 'tls-error', 'unchecked', 'checking']), 'every endpoint health state should be sampled')
+assert.equal(new Set(healthSamples.map(({ message }) => message)).size, healthSamples.length, 'every distinct server health message should be sampled once')
+
+const namedTunnel = (endpointHealth, state = 'online') => ({ supported: true, enabled: true, configured: true, mode: 'named', hostname: 'gateway.example.com', port: 3082, state, publicUrl: endpoint, publicReady: false, endpointHealth })
+for (const health of healthSamples) {
+  const en = loadClient({ language: 'en-US', cloudflare: namedTunnel(health) })
+  openPanel(en); await en.runEffects()
+  let enPanel = en.renderOverlay()
+  en.click(en.find(enPanel, node => node.type === 'button' && node.props['aria-label'] === 'Connection method guide and scenario advice'))
+  enPanel = en.renderOverlay()
+  const enText = textContent(enPanel)
+  assert.ok(!HAN.test(enText), `English panel should contain no Chinese for ${health.state}: ${enText.match(/[^ ]*\p{Script=Han}[^ ]*/u)?.[0]}`)
+  const zh = loadClient({ language: 'zh-CN', cloudflare: namedTunnel(health) })
+  openPanel(zh); await zh.runEffects()
+  const zhText = textContent(zh.renderOverlay())
+  const healthLine = zhText.split(' · gateway.example.com/ws/mobile')[1] || zhText
+  assert.ok(HAN.test(healthLine) && !healthLine.includes(health.message), `Chinese panel should translate ${health.state}: ${health.message}`)
+}
+{
+  const health = healthSamples.find(({ state }) => state === 'reachable')
+  const en = loadClient({ language: 'en-US', cloudflare: namedTunnel(health) })
+  let enPanel = openPanel(en); await en.runEffects(); enPanel = en.renderOverlay()
+  assert.ok(en.find(enPanel, node => node.type === 'button' && textContent(node) === 'Check public DNS / TLS / WebSocket'), 'endpoint check button should be English')
+  assert.match(textContent(enPanel), /Tunnel transport connected \(public entry not confirmed reachable\)/)
+  assert.match(textContent(enPanel), /proxied CNAME record pointing to <Tunnel UUID>\.cfargotunnel\.com/)
+  assert.match(textContent(enPanel), /Local check: TLS verified/)
+  assert.match(textContent(enPanel), /\(checked /)
+  en.click(en.find(enPanel, node => node.type === 'button' && node.props['aria-label'] === 'Connection method guide and scenario advice'))
+  assert.match(textContent(en.renderOverlay()), /tunnel connected; public entry unverified or check failed/)
+  await en.click(en.find(enPanel, node => node.type === 'button' && textContent(node) === 'Check public DNS / TLS / WebSocket'))
+  assert.ok(en.requests.some(({ path, options }) => path === '/mgw/cloudflare/check' && options.method === 'POST'), 'localized check action should preserve the upstream POST endpoint')
+  const zh = loadClient({ language: 'zh-CN', cloudflare: namedTunnel(health) })
+  let zhPanel = openPanel(zh); await zh.runEffects(); zhPanel = zh.renderOverlay()
+  assert.ok(zh.find(zhPanel, node => node.type === 'button' && textContent(node) === '检测公网 DNS / TLS / WebSocket'), 'endpoint check button should be Chinese')
+  assert.match(textContent(zhPanel), /隧道传输已连接（不等于公网入口可达）/)
+  assert.match(textContent(zhPanel), /本机检测：TLS 校验通过/)
+  assert.match(textContent(zhPanel), /（检测时间：/)
+  const route = loadClient({ language: 'zh-CN', cloudflare: namedTunnel(healthSamples.find(({ state }) => state === 'route-error')) })
+  openPanel(route); await route.runEffects()
+  assert.match(textContent(route.renderOverlay()), /公网返回 HTTP 502，未确认移动网关路由/)
+  const unknown = loadClient({ language: 'en-US', cloudflare: namedTunnel({ state: 'route-error', message: 'custom diagnostic' }) })
+  openPanel(unknown); await unknown.runEffects()
+  assert.match(textContent(unknown.renderOverlay()), /custom diagnostic/, 'unknown health diagnostics should remain visible unchanged')
+}
+console.log('PASS client localization: locale fallback, safe storage, saved override, immediate accessible UI updates, restart messaging, and public endpoint health')
