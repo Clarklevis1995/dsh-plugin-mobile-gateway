@@ -1,7 +1,7 @@
 {
   "name": "dsh-plugin-mobile-gateway",
-  "version": "0.9.0",
-  "description": "Authenticated mobile gateway for DeepSeek Harness with realtime session sync, device pairing, plugin management, and LAN or Cloudflare Tunnel access",
+  "version": "0.10.0",
+  "description": "Mobile gateway for DeepSeek Harness with secure device pairing, realtime session sync, plugin management, LAN and Cloudflare Tunnel access, and a responsive theme-aware control panel",
   "main": "lib/index.mjs",
   "files": [
     "bin",

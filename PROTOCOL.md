@@ -1130,7 +1130,8 @@ DSH Web 的“深度求索中，用时 22 秒 ···”是客户端文案，不�
 
 | 版本 | 新增 |
 |---|---|
-| v0.9.0（当前源码） | DSH 0.2.0-rc.2 插件管理；PC 端 Cloudflare Quick / 命名 Tunnel 及独立重启；插件私有 `cloudflared` 缓存及校验；配对入口选择指引；网关重启与 DSH Web 停止工具 |
+| v0.10.0（当前源码） | 响应式居中控制面板与主题同步；自定义下拉菜单；独立配对模态窗口与缩放动画；按运行实例关闭重启提醒；在线设备折叠列表与移动端设备名称上报；Tunnel 配置交互优化 |
+| v0.9.0 | DSH 0.2.0-rc.2 插件管理；PC 端 Cloudflare Quick / 命名 Tunnel 及独立重启；插件私有 `cloudflared` 缓存及校验；配对入口选择指引；网关重启与 DSH Web 停止工具 |
 | v0.7.2 | 独立对话/控制连接；空 Session 创建；停止生成与稍后继续；排队消息同步及编辑/删除/Steer；App 归档/重命名 Session；WebUI 归档集合和名称变化实时同步到 App |
 | v0.1.5 | workspace-create / directories / host |
 | v0.1.6 | 修复消息分发器遗漏（host/directories/workspace-create 未路由） |
@@ -1234,3 +1235,7 @@ does not put file responses behind conversation frames. This isolates socket
 queues; the underlying network link and Host resources remain shared. On connection
 failure clients reconnect and authenticate both lanes, then resubscribe and catch up
 history. Older gateways without the capability continue using one connection.
+
+### 移动端设备名称
+
+移动端在 WebSocket 握手中通过 `X-DSH-Device-Name` 上报 UTF-8 设备名称的标准 Base64 编码；配对和凭据重连时均发送。网关不使用控制面板指定的名称，未上报时使用“未命名设备”。可信设备接口保留原始 `name`，并提供 `displayName`；同名设备显示编号后缀，例如“我的手机 (1)”“我的手机 (2)”。
