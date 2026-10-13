@@ -104,7 +104,19 @@ function expectRejected(url, options = {}) {
   const ctx = {
     webServer,
     typertGateway: {
-      async invoke() { throw new Error('unexpected Remote invocation') },
+      async invoke(request) {
+        if (request.namespace === 'speech' && request.method === 'catalog') return {
+          providers: [{ id: 'sensevoice-local', preparation: { phase: 'ready' } }],
+          selection: { providerId: 'sensevoice-local', language: 'auto' },
+          maxAudioBytes: 4194304, maxDurationSeconds: 120,
+        }
+        if (request.namespace === 'speech' && request.method === 'transcribe') {
+          assert.equal(request.args.request.audioBase64, 'AA==')
+          assert.ok(request.signal instanceof AbortSignal)
+          return { text: '测试语音', audioSeconds: 1, inferenceSeconds: 0.1 }
+        }
+        throw new Error('unexpected Remote invocation')
+      },
       async stream(request) {
         return (async function* () {
           if (request.namespace === 'workspace' && request.method === 'follow') {
@@ -186,6 +198,9 @@ function expectRejected(url, options = {}) {
   const debugHelloPromise = waitForMessage(debugSocket, 'hello')
   await once(debugSocket, 'open')
   assert.equal((await debugHelloPromise).authenticated, false)
+  const unauthenticatedSpeech = waitForMessage(debugSocket, 'error')
+  debugSocket.send(JSON.stringify({ type: 'speech-catalog', requestId: 'unauthenticated-speech' }))
+  assert.equal((await unauthenticatedSpeech).code, 'authentication-required')
 
   const debugClosePromise = once(debugSocket, 'close')
   const enableAuthResponse = await fetch(`${base}/mgw/auth`, {
@@ -261,12 +276,19 @@ function expectRejected(url, options = {}) {
     'goals',
     'schedule-management',
     'plugin-management-v1',
+    'speech-input-v1',
     'session-cancel',
     'queue-control',
     'session-archive',
     'session-rename',
     'file-downloads',
   ])
+  const speechCatalog = waitForMessage(pairedSocket, 'speech-catalog')
+  pairedSocket.send(JSON.stringify({ type: 'speech-catalog', requestId: 'speech-info' }))
+  assert.equal((await speechCatalog).available, true)
+  const speechTranscript = waitForMessage(pairedSocket, 'speech-transcript')
+  pairedSocket.send(JSON.stringify({ type: 'speech-transcribe', requestId: 'speech-record', audioBase64: 'AA==' }))
+  assert.equal((await speechTranscript).text, '测试语音')
   const connectedStatus = await (await fetch(`${base}/mgw/status`)).json()
   assert.equal(connectedStatus.gatewayEnabled, true)
   assert.equal(connectedStatus.waitExpiresAt, null)
@@ -276,10 +298,23 @@ function expectRejected(url, options = {}) {
     { headers: { 'X-DSH-Device-ID': clientDeviceId } },
   ), 401)
 
-  const tokenSocket = new WebSocket(wsUrl, { headers: { Authorization: `Bearer ${pairedFrame.token}` } })
+  const tokenSocket = new WebSocket(wsUrl, { headers: { Authorization: `Bearer ${pairedFrame.token}`, 'X-DSH-Channel': 'control' } })
   const tokenHelloPromise = waitForMessage(tokenSocket, 'hello')
   await once(tokenSocket, 'open')
   assert.equal((await tokenHelloPromise).authenticated, true)
+  const controlSpeech = waitForMessage(tokenSocket, 'speech-transcript')
+  tokenSocket.send(JSON.stringify({ type: 'speech-transcribe', requestId: 'control-speech', audioBase64: 'AA==' }))
+  assert.equal((await controlSpeech).requestId, 'control-speech')
+  const conversationSocket = new WebSocket(wsUrl, { headers: {
+    Authorization: `Bearer ${pairedFrame.token}`, 'X-DSH-Channel': 'conversation',
+  } })
+  await once(conversationSocket, 'open')
+  const wrongChannel = waitForMessage(conversationSocket, 'error')
+  conversationSocket.send(JSON.stringify({ type: 'speech-catalog', requestId: 'wrong-speech-channel' }))
+  assert.equal((await wrongChannel).code, 'wrong-channel')
+  const conversationClosed = once(conversationSocket, 'close')
+  conversationSocket.close()
+  await conversationClosed
 
   const devicesResponse = await fetch(`${base}/mgw/devices`)
   const devicesBody = await devicesResponse.json()

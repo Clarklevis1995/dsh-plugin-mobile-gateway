@@ -5,7 +5,7 @@
 - **本机端点**：`ws://127.0.0.1:3080/ws/mobile`（与 dsh web GUI 同端口）
 - **局域网端点**：`ws://<电脑的私有局域网 IP>:3081/ws/mobile`（插件独立监听，只提供经过鉴权的 WebSocket）
 - **公网端点**：必须由 TLS 反向代理提供 `wss://<域名>/ws/mobile`
-- **帧格式**：全部为 JSON 文本帧（UTF-8）；图片字节使用标准 Base64
+- **帧格式**：全部为 JSON 文本帧（UTF-8）；图片字节及语音 WAV 使用标准 Base64
 - **连接即推送**：连上后服务端立刻发送一条 `hello`，之后 agent 输出以 `event` 帧实时推送
 
 ---
@@ -1130,7 +1130,8 @@ DSH Web 的“深度求索中，用时 22 秒 ···”是客户端文案，不�
 
 | 版本 | 新增 |
 |---|---|
-| v0.10.0（当前源码） | 响应式居中控制面板与主题同步；自定义下拉菜单；独立配对模态窗口与缩放动画；按运行实例关闭重启提醒；在线设备折叠列表与移动端设备名称上报；Tunnel 配置交互优化 |
+| v0.10.1（当前源码） | 新增官方 speech Remote 语音输入桥接；模型准备与状态同步；移动端音频转文字与取消转写；连接关闭时清理语音任务 |
+| v0.10.0 | 响应式居中控制面板与主题同步；自定义下拉菜单；独立配对模态窗口与缩放动画；按运行实例关闭重启提醒；在线设备折叠列表与移动端设备名称上报；Tunnel 配置交互优化 |
 | v0.9.0 | DSH 0.2.0-rc.2 插件管理；PC 端 Cloudflare Quick / 命名 Tunnel 及独立重启；插件私有 `cloudflared` 缓存及校验；配对入口选择指引；网关重启与 DSH Web 停止工具 |
 | v0.7.2 | 独立对话/控制连接；空 Session 创建；停止生成与稍后继续；排队消息同步及编辑/删除/Steer；App 归档/重命名 Session；WebUI 归档集合和名称变化实时同步到 App |
 | v0.1.5 | workspace-create / directories / host |
@@ -1239,3 +1240,74 @@ history. Older gateways without the capability continue using one connection.
 ### 移动端设备名称
 
 移动端在 WebSocket 握手中通过 `X-DSH-Device-Name` 上报 UTF-8 设备名称的标准 Base64 编码；配对和凭据重连时均发送。网关不使用控制面板指定的名称，未上报时使用“未命名设备”。可信设备接口保留原始 `name`，并提供 `displayName`；同名设备显示编号后缀，例如“我的手机 (1)”“我的手机 (2)”。
+
+
+## 官方语音输入（`speech-input-v1`）
+
+网关代理 DSH 0.2.0-rc.2 的官方实验性 `speech` Remote。先在 DSH 插件管理中启用 `@deepseek-ai/dsh-experimental-voice-input-bundle`（“语音输入”），并在详情中下载、准备模型；也可由客户端通过下面的准备接口操作。识别模型运行在 DSH 主机上，不进入移动安装包。
+
+所有语音请求必须来自已配对设备，并使用 **control 连接**（兼容 legacy 单连接）。即使关闭本机调试鉴权，未配对连接也不能调用语音接口。配对连接的 `hello.capabilities` 包含 `speech-input-v1`，表示网关协议支持；**是否已启用官方插件、模型是否就绪，需要查询目录**。
+
+每个请求都必须提供非空 `requestId`（最多 128 字符），活动请求和订阅期间不要复用。转写结果不创建 Session、不启动 Agent、不写历史，也不自动发送；客户端根据请求 ID 确认录音仍属于当前草稿后插入文字。
+
+| 请求 `type` | 字段（除 `requestId` 外） | 响应 `kind` |
+|---|---|---|
+| `speech-catalog` | 无 | `speech-catalog` |
+| `speech-subscribe` | 无 | `speech-subscribed`，随后推送 `speech-state` |
+| `speech-unsubscribe` | 无 | `speech-unsubscribed` |
+| `speech-configure` | `providerId?`, `language?`，至少一个 | `speech-configured` |
+| `speech-prepare` | `providerId`, `downloadSource?` | `speech-preparing` |
+| `speech-cancel-preparation` | `providerId` | `speech-preparation-cancelled` |
+| `speech-transcribe` | `audioBase64`, `providerId?`, `language?` | `speech-transcript` |
+| `speech-cancel` | `targetRequestId`，同连接的活动转写 ID | `speech-cancelled` |
+
+### 目录、安装和进度
+
+```json
+{ "type": "speech-catalog", "requestId": "speech-info-1" }
+```
+
+启用后响应 `available:true`，并透传官方 `providers`, `selection`, `maxDurationSeconds`。`maxAudioBytes` 为官方限制和网关限制的较小者：网关最多接受 4 MiB 解码后 WAV，并按 `maxPayloadBytes` 为 JSON 信封预留空间。官方默认时长为 120 秒，实际值以目录为准。
+
+`providers[]` 包含 `id`, `name`, `location`, `languages`, `preparation`，以及可选 `setupEstimate` 和 `downloadSources`。`preparation.phase` 为 `ready` 或 `standby` 时可转写；`unprepared` 需要准备。不要假设语言代码，使用所选 Provider 的 `languages`。`selection` 是主机保存的默认识别器和语言。
+
+插件未启用/Remote 已撤销时，目录返回：
+
+```json
+{ "kind": "speech-catalog", "requestId": "speech-info-1", "available": false,
+  "providers": [], "code": "speech/unavailable",
+  "message": "Enable the official voice input bundle in DSH plugin management" }
+```
+
+```json
+{ "type": "speech-subscribe", "requestId": "speech-watch-1" }
+{ "type": "speech-prepare", "requestId": "speech-setup-1", "providerId": "sensevoice-local" }
+```
+
+每条 `speech-state` 带订阅的 `requestId`，是完整目录快照。准备过程会提供阶段、步骤和真实下载字节。`speech-preparing` 只表示准备请求已提交，不能当作模型已就绪。`downloadSource` 必须来自目录公布的源，官方 Provider 会验证它。断开观察连接或取消订阅不取消 Host 拥有的准备任务；只有 `speech-cancel-preparation` 显式取消。订阅因服务禁用或正常结束而终止时会返回错误，重新启用后需要重新订阅。
+
+### 松手后提交录音、回填文字
+
+客户端长按时录音，松手停止并转换成 **16 kHz、单声道、PCM16 WAV**，将包含 WAV 头的完整文件编码为规范 Base64（不是 PCM 裸流、AAC/M4A 或 Opus）。
+
+```json
+{ "type": "speech-transcribe", "requestId": "record-1",
+  "providerId": "sensevoice-local", "language": "zh", "audioBase64": "<完整 WAV 的 Base64>" }
+```
+
+```json
+{ "kind": "speech-transcript", "requestId": "record-1", "text": "帮我检查这段代码",
+  "audioSeconds": 3.2, "inferenceSeconds": 0.4 }
+```
+
+`text` 允许为空，表示未识别到讲话。录音开始时应从目录捕获识别器和语言并随请求发送，避免主机偏好在录音中改变。这里只支持官方插件的**完整录音转写**，没有实时增量文字、语音通话或 TTS。
+
+每连接最多一个活动转写，网关总共最多四个，每连接最多八个待完成普通语音请求。转写包括目录查询在内有 180 秒超时；官方 Provider 还具有自己的准备/推理限制。
+
+```json
+{ "type": "speech-cancel", "requestId": "cancel-1", "targetRequestId": "record-1" }
+```
+
+取消回执只表示已发出取消信号；原转写随后返回 `speech/cancelled`，资源清理完成前仍占并发名额。断线、网关停止会中止该连接的活动转写和状态订阅。其他连接不能取消这个转写，即使属于同一设备。客户端上滑取消、切换页面或替换草稿后必须忽略旧请求的迟到结果。
+
+错误统一为 `kind:error`，包含 `requestType`, `requestId`, `code`, `message`。网关错误包括 `authentication-required`, `wrong-channel`, `bad-request`, `speech/unavailable`, `speech/busy`, `speech/request-in-progress`, `speech/request-not-found`, `speech/invalid-audio`, `speech/cancelled`, `speech/timeout`, `speech/invalid-response`, `speech/stream-ended`；官方插件的 `speech/transcription-failed` 等错误代码保留。

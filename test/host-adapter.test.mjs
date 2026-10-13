@@ -70,6 +70,24 @@ const gateway = {
 
 const host = createDshHostAdapter(gateway)
 
+// 官方实验性语音 Remote 使用各自的真实参数名，并传递取消信号。
+{
+  const signal = new AbortController().signal
+  const request = { audioBase64: 'AA==', providerId: 'sensevoice-local', language: 'zh' }
+  await host.speech.catalog(signal)
+  await host.speech.transcribe(request, signal)
+  await host.speech.prepare('sensevoice-local', { downloadSource: 'https://hf-mirror.com' }, signal)
+  await host.speech.configure({ language: 'zh' }, signal)
+  await host.speech.cancelPreparation('sensevoice-local', signal)
+  assert.deepEqual(calls.filter(call => call.namespace === 'speech'), [
+    { namespace: 'speech', method: 'catalog', args: {}, signal },
+    { namespace: 'speech', method: 'transcribe', args: { request }, signal },
+    { namespace: 'speech', method: 'prepare', args: { providerId: 'sensevoice-local', options: { downloadSource: 'https://hf-mirror.com' } }, signal },
+    { namespace: 'speech', method: 'configure', args: { patch: { language: 'zh' } }, signal },
+    { namespace: 'speech', method: 'cancelPreparation', args: { providerId: 'sensevoice-local' }, signal },
+  ])
+}
+
 await host.sessions.list()
 const sessionListCall = calls.find((call) => call.namespace === 'session' && call.method === 'list')
 assert.deepEqual(sessionListCall.args, { _request: {} })
