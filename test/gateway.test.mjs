@@ -9,6 +9,15 @@ const crypto = require('node:crypto')
 const plugin = (await import('../lib/index.mjs')).default
 const { handleQuery } = await import('../lib/index.mjs')
 const assert = await import('node:assert/strict')
+// Delivery declarations must survive the conversation history projection.
+{
+  const delivery = { type: 'deliverables/presented', seq: 4, time: 4,
+    data: { turn: 1, callId: 'present-1', files: [{ path: 'build/三亚攻略.pdf', description: 'A4 共 8 页' }] } }
+  const api = { sessions: { history: async () => ({ historyFormatVersion: 4, cursor: 4,
+    hasMore: false, projections: { asOfSeq: 4, values: {} }, events: [{ event: delivery }] }) } }
+  const page = await handleQuery(api, null, null, { type: 'history', sessionId: 's1', view: 'conversation' })
+  assert.deepEqual(page.events, [delivery])
+}
 {
   const calls = []
   const api = { sessions: {
@@ -27,7 +36,9 @@ const assert = await import('node:assert/strict')
 
 // Compact V4 history and reject stale/unversioned cursor coordinates before RPC.
 {
-  const stream = [{ type: 'text-chunks', time0: 1, index: 0, dt: [], texts: ['x'.repeat(100_000)] }]
+  const stream = [{ type: 'text-chunks', time0: 1, index: 0, dt: [], texts: ['x'.repeat(100_000)] },
+    { type: 'chunk', time: 2, chunk: { type: 'finish', reason: { kind: 'error',
+      failure: { message: 'Provider unavailable', code: 'TRANSPORT', status: 503 } } } }]
   let historyCalls = 0
   let forkCalls = 0
   const api = { sessions: {
@@ -43,6 +54,8 @@ const assert = await import('node:assert/strict')
   const page = await handleQuery(api, null, null, { type: 'history', sessionId: 's1', view: 'conversation' })
   assert.deepEqual(page.events.map(event => event.type), ['assistant/message', 'assistant/attempt'])
   assert.ok(page.events.every(event => !('stream' in event.data)))
+  assert.deepEqual(page.events[1].data.finish, { kind: 'error',
+    failure: { message: 'Provider unavailable', code: 'TRANSPORT', status: 503 } })
   assert.ok(page.bytes < 1000)
   assert.equal(page.events[0].data.interrupted, true)
   assert.equal(page.historyFormatVersion, 4)
@@ -78,6 +91,7 @@ const outsideFile = path.join(os.tmpdir(), `dsh-mobile-outside-${process.pid}.bi
 fs.mkdirSync(fileDownloadDir)
 fs.writeFileSync(path.join(fileDownloadDir, 'app-release.apk'), fileDownloadBytes)
 fs.writeFileSync(path.join(fileDownloadRoot, 'guide.pdf'), Buffer.from('%PDF-1.7\nmobile gateway\n'))
+fs.writeFileSync(path.join(fileDownloadRoot, '三亚 攻略.pdf'), Buffer.from('%PDF-1.7\nChinese name\n'))
 fs.writeFileSync(outsideFile, Buffer.from('outside workspace'))
 fs.symlinkSync(outsideFile, path.join(fileDownloadRoot, 'outside-link.bin'))
 
@@ -410,14 +424,43 @@ function waitFor(pred, timeout) { return new Promise((res) => { const t0 = Date.
     error: { name: 'ToolError', code: 'DENIED', reason: 'permission denied' },
   } })
   listeners['session/event']({ id: 's1' }, { type: 'assistant/attempt', seq: 9001, time: 2, data: {
-    turn: 1, step: 0, stream: [{ type: 'chunk', time: 1, chunk: { type: 'finish', reason: { kind: 'error' } } }],
+    turn: 1, step: 0, stream: [{ type: 'chunk', time: 1, chunk: { type: 'finish', reason: { kind: 'error',
+      failure: { message: 'Rate limited', code: 'RATE_LIMIT', status: 429 } } } }],
   } })
   assert.equal(await waitFor(() => got.some(frame => frame.seq === 9001), 2000), true)
   assert.equal(got.find(frame => frame.seq === 9000).event.isError, true)
   assert.equal(got.find(frame => frame.seq === 9000).event.preview, 'failed')
+  assert.equal(got.find(frame => frame.seq === 9000).event.output, 'failed')
   assert.equal(got.find(frame => frame.seq === 9000).event.error.reason, 'permission denied')
   assert.equal(got.find(frame => frame.seq === 9001).event.stream[0].type, 'chunk')
+  assert.equal(got.find(frame => frame.seq === 9001).event.finish.failure.status, 429)
+  const retry = { turn: 1, step: 0, retryId: 'retry-1', provider: 'deepseek', mode: 'normal',
+    retry: 1, maxRetries: 5, delayMs: 1000, failure: { message: 'Rate limited', code: 'RATE_LIMIT', status: 429 } }
+  listeners['session/event']({ id: 's1' }, { type: 'llm/retry', seq: 9002, time: 3, data: retry })
+  listeners['session/event']({ id: 's1' }, { type: 'llm/retry-started', seq: 9003, time: 4,
+    data: { turn: 1, step: 0, retryId: 'retry-1', retry: 1 } })
+  listeners['session/event']({ id: 's1' }, { type: 'turn/end', seq: 9004, time: 5, data: {
+    turn: 1, reason: { kind: 'error', error: retry.failure },
+  } })
+  assert.equal(await waitFor(() => got.some(frame => frame.seq === 9004), 2000), true)
+  assert.deepEqual(got.find(frame => frame.seq === 9002).event, { type: 'llm/retry', ...retry })
+  assert.equal(got.find(frame => frame.seq === 9003).event.retryId, 'retry-1')
+  assert.equal(got.find(frame => frame.seq === 9004).event.reason, 'error')
+  assert.deepEqual(got.find(frame => frame.seq === 9004).event.reasonDetails.error, retry.failure)
   interactionResults.push(['v4 failed tool and attempt payloads', true])
+
+  const delivered = { turn: 1, callId: 'present-pdf', files: [
+    { path: 'guide.pdf', description: 'PDF 攻略', ignored: 'not on wire' },
+    { path: path.join(fileDownloadRoot, '三亚 攻略.pdf') },
+  ] }
+  listeners['session/event']({ id: 's1' }, { type: 'deliverables/presented', seq: 9005, time: 6, data: delivered })
+  assert.equal(await waitFor(() => got.some(frame => frame.seq === 9005), 2000), true)
+  assert.deepEqual(got.find(frame => frame.seq === 9005).event, { type: 'deliverables/presented',
+    turn: 1, callId: 'present-pdf', files: [
+      { path: 'guide.pdf', description: 'PDF 攻略' }, { path: delivered.files[1].path },
+    ] })
+  assert.ok(got.find(frame => frame.kind === 'hello').capabilities.includes('file-references-v1'))
+  interactionResults.push(['live delivery keeps paths and descriptions', true])
 
   // Auxiliary queries must report the real failure with their own request identity.
   for (const type of ['permission-options', 'context-usage', 'session-stats']) {
@@ -515,6 +558,12 @@ function waitFor(pred, timeout) { return new Promise((res) => { const t0 = Date.
       assert.equal(frames.find(frame => frame.kind === 'event').event.interrupted, true)
       assert.equal(frames.find(frame => frame.kind === 'event').event.usage.outputTokens, 2)
       assert.equal(frames.find(frame => frame.kind === 'event').surfaceOp, 'append')
+      const delivery = { type: 'deliverables/presented', seq: 43, time: 103,
+        data: { turn: 2, callId: 'present-follow', files: [{ path: 'guide.pdf', description: 'PDF' }] } }
+      state.frames.push({ type: 'event', event: delivery })
+      assert.equal(await waitFor(() => frames.some(frame => frame.seq === 43), 2000), true)
+      assert.deepEqual(frames.find(frame => frame.seq === 43).event, { type: delivery.type, ...delivery.data })
+      assert.equal(frames.find(frame => frame.seq === 43).streamId, baseline.streamId)
       socket.send(JSON.stringify({ type: 'unsubscribe' }))
       assert.equal(await waitFor(() => state.signals[0].aborted, 2000), true)
       interactionResults.push(['rc2 ordered follow and independent chunks', true])
@@ -870,6 +919,40 @@ function waitFor(pred, timeout) { return new Promise((res) => { const t0 = Date.
   const fileListReady = await waitFor(() => got.some((m) => m.kind === 'file-list' && m.requestId === 'files-1'), 2000)
   const fileList = got.find((m) => m.kind === 'file-list' && m.requestId === 'files-1')
   interactionResults.push(['file list workspace only', fileListReady && fileList.path === '.' && fileList.entries.some((e) => e.path === 'builds' && e.kind === 'directory') && fileList.entries.some((e) => e.path === 'guide.pdf' && e.mediaType === 'application/pdf') && !fileList.entries.some((e) => e.name === 'outside-link.bin')])
+
+  // Both card paths and Markdown absolute paths resolve to the download grammar.
+  for (const [inputPath, expectedPath] of [
+    ['guide.pdf', 'guide.pdf'],
+    [path.join(fileDownloadRoot, 'guide.pdf'), 'guide.pdf'],
+    [path.join(fs.realpathSync(fileDownloadRoot), 'guide.pdf'), 'guide.pdf'],
+    ['三亚 攻略.pdf', '三亚 攻略.pdf'],
+  ]) {
+    const requestId = `resolve-${crypto.randomUUID()}`
+    ws.send(JSON.stringify({ type: 'file-resolve', requestId, sessionId: 's1', path: inputPath }))
+    assert.equal(await waitFor(() => got.some(frame => frame.requestId === requestId), 2000), true)
+    const resolved = got.find(frame => frame.requestId === requestId)
+    assert.equal(resolved.kind, 'file-resolved')
+    assert.equal(resolved.path, expectedPath)
+    assert.equal(resolved.name, path.basename(expectedPath))
+    assert.equal(resolved.mediaType, 'application/pdf')
+    assert.equal(resolved.sessionId, 's1')
+    assert.equal(resolved.size, fs.statSync(path.join(fileDownloadRoot, expectedPath)).size)
+    assert.ok(resolved.modifiedAt > 0)
+  }
+  for (const [inputPath, expectedCode] of [
+    ['../outside.bin', 'bad-request'], [outsideFile, 'file-not-allowed'],
+    ['outside-link.bin', 'file-not-allowed'], ['missing.pdf', 'file-not-found'],
+    ['builds', 'file-not-regular'], ['', 'bad-request'], ['bad\0.pdf', 'bad-request'],
+  ]) {
+    const requestId = `resolve-error-${expectedCode}-${inputPath}`
+    ws.send(JSON.stringify({ type: 'file-resolve', requestId, sessionId: 's1', path: inputPath }))
+    assert.equal(await waitFor(() => got.some(frame => frame.requestId === requestId), 2000), true)
+    const error = got.find(frame => frame.requestId === requestId)
+    assert.equal(error.kind, 'error')
+    assert.equal(error.requestType, 'file-resolve')
+    assert.equal(error.code, expectedCode)
+  }
+  interactionResults.push(['file references resolve native paths and reject unsafe targets', true])
 
   ws.send(JSON.stringify({ type: 'file-download-open', requestId: 'download-1', sessionId: 's1', path: 'builds/app-release.apk' }))
   const openedReady = await waitFor(() => got.some((m) => m.kind === 'file-download-opened' && m.requestId === 'download-1'), 2000)

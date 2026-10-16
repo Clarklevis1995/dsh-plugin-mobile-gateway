@@ -651,6 +651,7 @@ let image = [
 | `history` | `sessionId`, `beforeSeq?`, `historyFormatVersion?`, `maxMessages?`, `maxBytes?`, `view?` | 历史事件页（见下） |
 | `attachment` | `sessionId`, `attachmentId` | 读取历史中属于该会话的图片字节 |
 | `file-list` | `sessionId`, `path?`, `requestId?` | 列出会话工作目录内的一层文件与文件夹 |
+| `file-resolve` | `sessionId`, `path`, `requestId` | 将文件引用解析为工作目录相对路径及预览元数据；需 `file-references-v1` |
 | `file-download-open` | `sessionId`, `path`, `requestId` | 打开一个工作目录内的普通文件下载 |
 | `file-download-read` | `transferId`, `offset` | 拉取下载的下一块字节 |
 | `file-download-cancel` | `transferId` | 取消并关闭下载 |
@@ -702,7 +703,7 @@ WebUI、App 或其他客户端造成的变化通过以下帧主动推送：
 - 返回**原始 SessionEvent**（`{type, seq, time, data}`，方案A），可选裁剪
 - 图片不会内联进历史页。`user/message.data.content[]` 中的图片块为 `{ "type":"image", "attachment": ImageAttachmentRef }`；iOS 使用其中的 `attachmentId` 请求图片数据
 - `maxBytes`：单帧字节预算，默认 **4 MiB**；超预算保留最新部分并给出 `nextBeforeSeq` 续页（客户端 16 MiB 上限的安全余量）
-- `view: "conversation"`：**对话裁剪模式**——隐藏系统消息与 request/header、request/context，移除 Assistant 事件的内嵌 `data.stream`，`tool/result` 文本截断到 2000 字符
+- `view: "conversation"`：**对话裁剪模式**——隐藏系统消息与 request/header、request/context，移除 Assistant 事件的内嵌 `data.stream`，同时保留 `data.finish`（结束类型和结构化失败原因）；`tool/result` 原始文本块截断到 2000 字符，另用 `data.output/outputTruncated` 保留最多约 16000 字符的首尾输出
 - 分页：`hasMore` 为真时用 `beforeSeq: nextBeforeSeq, historyFormatVersion: 4` 请求更早一页
 
 ```json
@@ -753,6 +754,43 @@ iOS 发现尚未缓存的 `attachmentId` 后发送：
 ```
 
 iOS 用 `Data(base64Encoded:)` 解码并按 `attachment.mediaType` 渲染，建议以 `attachmentId` 为缓存键。不要把 Base64 长期保存在对话模型对象里。并发同步历史时可限制为 2～4 个附件请求，优先加载当前可见消息。
+
+### 文件卡片与正文文件引用
+
+`hello.capabilities` 中的 `file-references-v1` 表示支持文件交付事件的完整实时字段以及 `file-resolve`。这是协议 3 的可选增量，不改变 Session V4 格式；关闭 `fileDownloadsEnabled` 后不公布此能力，解析请求返回 `file-download-disabled`。旧客户端可忽略新增能力与事件。
+
+DSH `present` 工具成功后持久化 `deliverables/presented`，移动端根据这个事件渲染卡片，而非从回复文字猜测附件：
+
+```json
+{
+  "kind": "event", "sessionId": "session-abc", "seq": 42, "time": 1786937352,
+  "event": {
+    "type": "deliverables/presented", "turn": 3, "callId": "present-1",
+    "files": [{ "path": "build/三亚国庆旅游攻略.pdf", "description": "A4 共 8 页" }]
+  }
+}
+```
+
+`history` / `session-snapshot` 中同一事件仍使用原始 `{type, seq, time, data: {turn, callId, files}}` 格式。按 `sessionId + seq` 合并历史和实时事件，再按 `turn` 将卡片放在本轮回复下面。文件引用保存的是路径，读取的是当前文件内容，并未复制成永久附件；文件以后可能被修改或删除。`description` 是模型提供的描述，页数并非结构化字段。
+
+点击卡片或正文中的本地文件链接后，通过**控制连接**解析：
+
+```json
+{ "type": "file-resolve", "requestId": "resolve-1", "sessionId": "session-abc", "path": "build/三亚国庆旅游攻略.pdf" }
+→ {
+  "kind": "file-resolved", "requestId": "resolve-1", "sessionId": "session-abc",
+  "path": "build/三亚国庆旅游攻略.pdf", "name": "三亚国庆旅游攻略.pdf",
+  "mediaType": "application/pdf", "size": 330752, "modifiedAt": 1786937352000
+}
+```
+
+- 输入为未做 URL 编码的文件系统路径，可以是相对路径或主机原生绝对路径；仅允许该会话工作目录内的普通文件，包括指向目录内文件的符号链接。会话 `cwd` 的已知路径别名会映射到真实工作目录。
+- 输出 `path` 为规范化的工作目录相对路径，`size` 单位为字节，`modifiedAt` 为 Unix 毫秒。随后把输出 `path` 交给现有 `file-download-open`，完成分块下载及 SHA-256 校验后在 App 内预览。
+- 解析不会创建 `transferId`，下载仍会重新验证路径与文件状态。卡片事件本身不会扩大目录读取权限；工作目录外的文件即使被 `present` 引用也返回 `file-not-allowed`。
+- `..` 路径段、NUL、空路径返回 `bad-request`；缺失、目录、越界符号链接、超限文件分别返回 `file-not-found`、`file-not-regular`、`file-not-allowed`、`file-too-large`。响应和失败均回显字符串 `requestId`，失败另带 `requestType: "file-resolve"`。
+- Markdown 链接由 App 解析，先提取路径并分离 `#L24` 等行号片段，再发送路径；不要把整个 Markdown、HTTP URL 或 `file://` URL 当作路径传入。行内代码只应将本轮已知文件路径及唯一匹配的文件名转换为可点击引用。
+
+两端具体接入点及验收清单见 [文件卡片与预览接入说明](docs/file-cards-mobile-integration.md)。
 
 ### 文件下载（图片、文档、IPA、APK 及其他普通文件）
 
@@ -1083,12 +1121,19 @@ Control/旧单连接接收全局模式状态增量，不受所订阅会话过滤
 `event.type` 覆盖（精炼字段）：
 - `user/message` → `{text, source, images?: ImageAttachmentRef[]}`
 - 实时 token 使用独立 `assistant-stream`，不是带持久 seq 的 `assistant/chunk`；详见 [rc.2 接入说明](docs/dsh-rc2-mobile-integration.md)。
-- `assistant/attempt` → `{turn, step, stream[]}`
-- `assistant/message` → `{turn, step, text, reasoning, toolCalls[], interrupted?, usage?}`
+- `assistant/attempt` → `{turn, step, stream[], finish?: {kind, failure?}}`
+- `assistant/message` → `{turn, step, text, reasoning, toolCalls[], interrupted?, usage?, finish?: {kind, failure?}}`
 - `session/title` → `{title, source?}`
 - `tool/call` → `{turn, step, callId, name, arguments}`
-- `tool/result` → `{turn, step, callId, isError, preview(≤400字符)}`
-- `turn/start|end` / `step/start|end` → `{turn, step, reason?}`
+- `deliverables/presented` → `{turn, callId, files: [{path, description?}]}`，用于本轮回复下方的文件卡片。
+- `tool/result` → `{turn, step, callId, isError, preview(≤400字符), output, outputTruncated, error?}`
+- `turn/start|end` / `step/start|end` → `{turn, step, reason?, reasonDetails?}`，保留原有 `reason` 字符串；`reasonDetails` 提供结构化终态错误或取消来源。
+- `llm/retry` → `{turn, step, retryId, retry, maxRetries?, delayMs, provider, mode, failure}`。
+- `llm/retry-started` → `{turn, step, retryId, retry}`。
+
+`failure` 保留上游提供的 `message/code/status/providerRetryAfterMs/requestId` 等诊断字段。工具 `output` 同时包含标准输出、`[stderr]`、沙箱提示和退出状态标记；超过 16000 字符时保留开头和末尾并设置 `outputTruncated: true`。需要未裁剪的完整内容时，按对应 seq 请求不带 `view: "conversation"` 的历史。
+
+移动端必须区分工具失败、模型请求失败、重试和整轮终止：`assistant/attempt` 不代表整轮中断；重试用 `retryId` 合并状态，`llm/retry-started` 更新为已重试并保留失败详情；最终错误以 `turn/end.reason: "error"` 为准，`aborted` 显示取消，`interrupted` 显示中断。Shell 的非零退出码可能仅在输出末尾 `[exit code: N]` 中，Host 的 `isError` 仍为 false；展示时可以标记该工具失败，但不能据此终止整轮。
 
 ### 运行中计时提示
 
@@ -1130,7 +1175,8 @@ DSH Web 的“深度求索中，用时 22 秒 ···”是客户端文案，不�
 
 | 版本 | 新增 |
 |---|---|
-| v0.10.1（当前源码） | 新增官方 speech Remote 语音输入桥接；模型准备与状态同步；移动端音频转文字与取消转写；连接关闭时清理语音任务 |
+| v0.10.2（当前源码） | 补齐 `deliverables/presented` 文件卡片实时字段；新增 `file-references-v1` 能力与 `file-resolve` 安全文件引用解析；复用现有分块下载支持移动端预览接入 |
+| v0.10.1 | 新增官方 speech Remote 语音输入桥接；模型准备与状态同步；移动端音频转文字与取消转写；连接关闭时清理语音任务 |
 | v0.10.0 | 响应式居中控制面板与主题同步；自定义下拉菜单；独立配对模态窗口与缩放动画；按运行实例关闭重启提醒；在线设备折叠列表与移动端设备名称上报；Tunnel 配置交互优化 |
 | v0.9.0 | DSH 0.2.0-rc.2 插件管理；PC 端 Cloudflare Quick / 命名 Tunnel 及独立重启；插件私有 `cloudflared` 缓存及校验；配对入口选择指引；网关重启与 DSH Web 停止工具 |
 | v0.7.2 | 独立对话/控制连接；空 Session 创建；停止生成与稍后继续；排队消息同步及编辑/删除/Steer；App 归档/重命名 Session；WebUI 归档集合和名称变化实时同步到 App |

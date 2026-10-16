@@ -217,3 +217,59 @@ iOS 实时采样转换原先只在下一块数据暂未到达时返回 noDataNow
 验证：公共层 268 项通过，六项新音频回归覆盖首尾静音、原样保留正常发音、固定增益、增益上限、近零/持续噪声保护以及官方限额。Android 8 项交互回归通过，最终共享代码 Android 编译通过；iOS 使用最终框架的 12 项回归通过，ktlint 和 git diff --check 通过。真实编译 KMM 产生的 WAV 经网关测试适配器送入本地官方原生识别器，五个短句的三档音量正样本全部完整，静音和持续噪声负样本均为空；检测到的候选增益误识别问题已通过峰均比条件修正。
 
 详细证据与范围见 [短句离线证据](voice-input-short-utterance-evidence/README.md)。没有修改官方 VAD 阈值或运行插件配置；没有进行用户真机录音/设备签名远端联调，因此不能宣称所有短句问题完全消失。日志：/tmp/dsh-short-speech-20261013-final-gradle.log、/tmp/dsh-short-speech-20261013-gradle.log、/tmp/dsh-short-speech-20261013-final-ios.log。
+
+## 抬手即退出蒙层，后台完成转写（2026-10-14）
+
+此前 UI 使用 SharedVoiceInputSnapshot.active 作为蒙层显示条件，该属性包含 stopping 和 transcribing，因此抬手后还会显示整理录音/转写状态。新增公共层 overlayVisible，只有 authorizing、starting、recording 显示录音蒙层；active 继续表示后台任务有效，用于请求 ID、超时、取消及防止同时启动另一项转写。正常松手切换到 stopping 时立即开始原有 280ms 淡出，之后保持普通输入框；不显示录音收尾、转写文案或处理按钮。后台阶段 status 返回空字符串，平台不保留并行 ASR 业务状态。
+
+Android 和 iOS 的蒙层、底部普通输入区隐藏及触摸保护改用 overlayVisible；Android 文本框恢复 enabled，焦点与键盘由用户主动点击决定。后台阶段不让语音长按接管原生文本编辑；成功后按原有草稿冲突策略回填，不主动聚焦。Android 淡出缓存只更新仍可见的录音快照，避免退出时闪过处理状态或切换颜色；两端删除转写阶段的取消按钮。异常 Alert、无人声短 Toast 和录音尾段/采样转换收尾保持原行为。
+
+验证：公共层新增正常松手后蒙层关闭而请求仍有效的回归，并覆盖启动阶段松手；Android 8 项原生交互测试通过，包含真实 up 后淡出、后台文本框可用、无处理文案、持续长按不弹键盘及回填后编辑；iOS 新增真实 SwiftUI 蒙层生命周期回归，抬手后 onDisappear 发生、后台转写随后回填而不自动弹键盘。两端构建、相关 Kotlin ktlint 和 git diff --check 通过。日志：/tmp/dsh-background-transcription-20261014-gradle.log、/tmp/dsh-background-transcription-20261014-ios.log。测试使用模拟器本地会话和采集替身，没有真实远端 ASR 联调。
+
+## 晕影外侧背景色渐变（2026-10-14）
+
+在彩色椭圆蒙层后方增加独立的外层渐变。浅色使用白色，深色使用当前页面背景色，避免明亮白边。外层横向半径为宽度的 0.98，较原彩色层的 0.8 更宽；纵向半径沿用蒙层高度的 0.6。归一化半径 0.78 到 1 使用 33 点 smoothstep 渐变，边缘斜率平滑归零。白色衬层先淡化边缘下的会话文字，再与内层蓝色/红色渐变融合，保持底部覆盖、40% 高度和原有入退场动画。
+
+验证：两端编译通过；Android 原生椭圆、淡入淡出及导航区覆盖两项回归通过，iOS 浅深色四态截图单测通过。额外生成浅深色文字重叠预览，目视检查文字逐渐淡化及深色无亮白边；更新八张状态预览、两张文字背景示例和 Android 全屏截图。Android 面板 ktlint、git diff --check 通过。未修改 KMM 录音、转写或状态机。日志：/tmp/dsh-voice-outer-halo-20261014-android.log、/tmp/dsh-voice-outer-halo-20261014-ios.log。
+
+## 提前采集与真实麦克风就绪门控（2026-10-14）
+
+此前长按确认后才启动硬件，且蒙层先于麦克风实际收到 PCM 显示；用户按动画开始说话时，硬件尚未就绪。Android 读取循环还会逐块等待主线程执行音量回调，首绘等 UI 工作可能阻塞后续采集。本次将共享层的 captureStarted 统一定义为首批 PCM 已写入缓冲，只有长按已确认且首批采样已收到，才进入 recording、显示蒙层并触发开始触感。尚在授权或硬件启动时保护输入，但不假显示可录音状态。
+
+已授权、会话连接且官方语音服务就绪时，真实手指 down 立即进入公共层 priming 并预采集，80ms 长按确认复用同一录音 ID 和已有样本；短按、手势失败或取消丢弃预采集，不发送转写请求。未授权的短按不请求权限，长按后才走原授权流程。UIKit 用原生手势的 touchesBegan/Ended/Cancelled 传递触摸边界，Android 在指针手势 finally 清理未确认的预采集；仍由 KMM 管理状态、录音 ID、权限结果、松手收尾和迟到回调隔离。
+
+会话内已授权时提前准备硬件资源，空闲时不启动麦克风或保存音频；离开会话或进入后台释放。Android 复用停止后的 AudioRecord，按公共层 20ms 窗口读取，写入 PCM 后只向主线程排队就绪和音量通知，读取线程不等待 UI；资源 generation 防止释放后的旧任务重新缓存设备。iOS 串行队列提前 prepare AVAudioEngine，申请 10ms I/O 时长并按 20ms 请求 tap 缓冲，保留转换器 EOS 收尾。系统偏好和 tap 大小不保证设备实际采用该周期，真实首批 PCM 才是就绪依据。[Android 读取接口](https://developer.android.com/reference/android/media/AudioRecord)、[Apple I/O 时长偏好](https://developer.apple.com/documentation/avfaudio/avaudiosession/setpreferrediobufferduration(_:))、[Apple engine.prepare](https://developer.apple.com/documentation/avfaudio/avaudioengine/prepare())。
+
+验证：最终公共层 274 项、Android 11 项相关回归、iOS 15 项相关回归全部通过；覆盖按下提前采集、首采样前不显示蒙层、长按复用启动、首部样本保留、短按丢弃、取消后的迟到回调和原生编辑行为。两端构建、相关 Kotlin ktlint 和客户端 git diff --check 通过。日志：/tmp/dsh-mic-readiness-20261014-common-final.log、/tmp/dsh-mic-readiness-20261014-gradle.log、/tmp/dsh-mic-readiness-20261014-final-gradle.log、/tmp/dsh-mic-readiness-20261014-verified-ios.log；中途新增公共层用例曾将原有 stopTicker 清理效果误判为多余，修正断言后最终全部通过。
+
+这些测试使用本地会话和采集替身，不包含真机麦克风冷启动或设备签名远端联调。新增 first-pcm 日志用于实体设备核对触摸、硬件启动和实际收到采样之间的耗时；iOS 该耗时包含音频会话配置、激活及 engine 启动。预览说明已同步采集与显示时机，蒙层外观保持原参数。
+
+## iOS 进入会话时预热崩溃（2026-10-14）
+
+用户真机日志在进入会话后出现 `com.apple.coreaudio.avfaudio`，断言为 `inputNode != nullptr || outputNode != nullptr`。上一轮新增的 IOSVoiceRecorder.prepare 在新建 AVAudioEngine 上直接调用 prepare，没有先访问按需创建的输入节点；Swift try? 只能处理 NSError/Swift Error，不能兜住该 NSException。此前采集替身的 prepare 默认无操作，没有覆盖真实引擎的这个初始化条件。
+
+修复为配置音频会话后先建立 engine.inputNode，再检查硬件输入格式的采样率及声道数；不可用时跳过空闲预热，实际长按仍走原有启动与错误处理。格式有效时才执行 engine.prepare。release 补充 engine.stop 后 reset，并停用可能被 prepare 隐式激活的音频会话。保留按下预采集、首批 PCM 就绪后显示蒙层及 KMM 状态管理。
+
+新增真实 AVAudioEngine 回归，不使用采集替身，覆盖冷引擎、重复预热、释放后再预热三个循环，确认输入节点存在、engine 未运行且没有录音缓冲。修复前该用例复现与用户日志一致的断言并失败；修复后 iOS 语音与输入框共 16 项测试通过，构建与 git diff --check 通过。本机模拟器原生输入格式为 0 Hz，验证了不可用格式安全退出路径及节点建立；格式有效时的真机预热及带设备签名的远端会话仍需真机复测。日志：/tmp/dsh-mic-prewarm-crash-20261014-before.log、/tmp/dsh-mic-prewarm-crash-20261014-after.log。
+
+## 按录音启动成功反馈，不再等待首批 PCM（2026-10-14）
+
+用户反馈首 PCM 门控使蒙层再次变慢。首批缓冲交付和采样转换不等于硬件开始采集；将二者合并会在系统已经录音后增加显示等待。本次保留 KMM 的长按确认与硬件就绪两个条件，平台的 ready/started 改为系统录音启动成功并确认运行状态：iOS engine.start 成功且 isRunning，Android startRecording 成功且 RECORDSTATE_RECORDING。此时系统已启用音频流，后续首批缓冲继续完整写入；不把蒙层提前到硬件尚未启动的阶段。first-pcm 仅作为独立诊断日志，80ms 手势判定、160ms 入场与200ms 尾段保持原值。
+
+iOS prepareSession 提前配置并激活会话，准备缓存复用到下一次手指 down；正常 stop 保留会话激活，release 在离开/后台停用会话与释放引擎。中断、路由变化及媒体服务重置会使准备缓存失效，下次启动重新准备；空闲不运行引擎或写入音频。新增受锁硬件请求 token，使短按撤销的排队 start 直接跳过，不再等待预热完成后把过期录音启动一遍。采集业务、草稿与 ASR 状态仍由 KMM 负责，平台只保存硬件准备与命令有效性。
+
+验证：iOS 17 项、Android 11 项相关原生回归通过，覆盖录音运行但尚无音量回调时显示蒙层、首部采样保留、短按丢弃、取消排队启动、真实引擎冷预热/释放后再预热以及原生文本编辑。两端构建、Android Kotlin ktlint 与 git diff --check 通过；未改变共享业务状态机，因此不重复运行全部公共层测试。没有真机分位耗时或远端联调。日志：/tmp/dsh-mic-start-confirmation-20261014-ios.log、/tmp/dsh-mic-start-confirmation-20261014-android.log。第三方 IPA 的静态复查、REA Evidence ID、超时限制及未确认项单独保留在被忽略的 `voice-input-ipa-evidence/startup-20261014/README.md`。
+
+## 长按、上滑与抬手三个触感节点（2026-10-14）
+
+按最新要求，KMM 在有效长按 press 成立时立即发出 hapticStart，不等待硬件 ready 或蒙层出现；captureStarted 只更新采集状态，不重复震动。上滑跨入取消区发出 hapticCancel，留在区域内连续移动不重复，滑回后再次进入才重新反馈；有效长按 release 发出一次 hapticRelease，正常转写和上滑取消后抬手均适用。短按和系统自动停止不模拟长按/抬手触感。
+
+Android 保留平台 LONG_PRESS、CLOCK_TICK、KEYBOARD_TAP 三种映射，iOS 保留原 impact/selection 映射，并在真实 down 时 prepare 开始触感生成器。状态与去重均在 KMM，两端只执行硬件效果。公共层 274 项、Android 三项采集平台回归、iOS 17 项语音/原生输入回归通过；新 Android 用例验证硬件仍处于 starting 时已经收到长按触感，以及完整的 start/cancel/release 顺序。Kotlin ktlint 与 git diff --check 通过。日志：/tmp/dsh-voice-three-haptics-20261014-gradle.log、/tmp/dsh-voice-three-haptics-20261014-ios.log。模拟器验证触发事件和去重，实体马达强度没有实测。
+
+## iOS 录音期间触感被系统抑制（2026-10-14）
+
+用户反馈 iOS 三个节点均感受不到震动。检查发现 IOSVoiceRecorder 配置了音频输入，但未调用 setAllowHapticsAndSystemSoundsDuringRecording(true)。该开关默认 false，音频输入期间系统可抑制 UIKit 触感；此前公共层和平台替身只证明事件发出，没有检查真实音频会话配置。来源：[Apple 录音触感开关](https://developer.apple.com/documentation/AVFAudio/AVAudioSession/allowHapticsAndSystemSoundsDuringRecording)，本机 AVAudioSession.h 第 111–116 行也明确说明默认值 NO。
+
+prepareSession 在配置 record 类别后、激活会话和启动预采集前，明确允许录音触感；准备缓存的复用条件也检查 allowHapticsAndSystemSoundsDuringRecording，避免其他配置关闭后仍跳过恢复。三个原有触感节点和强度保持原值，新增 Debug 日志 VoiceInputHaptic 的 cue、recordingAllowed 字段用于核对系统配置；日志只说明请求发出和开关状态，不证明实体马达实际播放。
+
+新增真实 AVAudioSession 回归，主动从 false 开始，覆盖冷准备、缓存复用、释放后重新准备，并在测试结束恢复原开关。修复前四个断言均失败，修复后该用例与原有语音/输入框共 18 项测试全部通过；构建、git diff --check 通过。日志：/tmp/dsh-ios-recording-haptics-20261014-before.log、/tmp/dsh-ios-recording-haptics-20261014-after.log。本轮修复明确的系统配置缺失，模拟器无法验证实体马达效果，真机仍需使用新构建复测。

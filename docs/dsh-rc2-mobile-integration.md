@@ -105,7 +105,7 @@
 
 `revision` 属于一次 Agent 生命周期，`index` 属于一次 attempt。不要把其中任何一个写入持久事件 seq。网关检查连续性；App 仍应按当前 streamId/attemptId 去重和隔离展示。
 
-持久帧仍使用 `kind: "event"`，由同一个上游 follow 有序转发，带真实 seq 以及 subscriptionId/streamId。不会再与全局 `session/event` 重复转发。消息附带中断标识 `interrupted` 和可选 usage；失败 attempt 保留 turn/step 与紧凑 stream。`surfaceOp` 和 `sourceEventSeqs` 在存在时位于持久帧根节点。
+持久帧仍使用 `kind: "event"`，由同一个上游 follow 有序转发，带真实 seq 以及 subscriptionId/streamId。不会再与全局 `session/event` 重复转发。消息附带中断标识 `interrupted` 和可选 usage；失败 attempt 保留 turn/step 与紧凑 stream。实时与历史对话裁剪均另行保留 `finish: {kind, failure?}`，因此重连后仍可还原模型错误。`surfaceOp` 和 `sourceEventSeqs` 在存在时位于持久帧根节点。
 
 ## 4. 重连、切换与取消
 
@@ -153,3 +153,11 @@
 ## 验证范围
 
 仓库测试覆盖 rc.2 的参数封装、两种独立序号、缺口恢复、取消清理、真实 WebSocket 的原子基线/最终结算、重连前缀、历史裁剪、游标版本校验、工具失败与控制投影。真实 rc.2 Host 与 App 联调仍需在客户端接入后执行。普通文件上传、jobs 和 PTC 专用 UI 属于后续能力扩展。
+
+
+## 错误详情与重试展示
+
+- 实时 `tool/result` 新增 `output/outputTruncated`，历史 conversation 模式在 `data` 内返回相同字段。优先展示 `output`，回退到 `preview`，无正文时展示 `error`。输出较长时保留首尾，退出状态和沙箱拒绝提示不会被仅取开头的摘要截掉。
+- `assistant/attempt.finish` 表示单次请求结束原因，不能一律显示“生成已中断”。`llm/retry` 携带 `retryId/retry/maxRetries?/delayMs/failure`，按重试链更新状态；`llm/retry-started` 表示等待结束、开始重试，不表示请求成功。
+- `turn/end` 保留原来的字符串 `reason`，新增 `reasonDetails`：`error` 展示生成失败及 `reasonDetails.error`，`aborted` 展示取消，`interrupted` 展示异常中断。工具执行失败后模型仍可继续运行。
+- 这些字段均为向后兼容的可选扩展，Session format 和订阅时钟不变。原始历史仍保留完整 token 流，裁剪历史只保留结束原因摘要。
