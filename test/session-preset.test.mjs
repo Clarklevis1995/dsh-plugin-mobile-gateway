@@ -1,3 +1,4 @@
+import { createTestPeer } from './helpers/peer.mjs'
 import assert from 'node:assert/strict'
 import { createDshHostAdapter } from '../lib/dsh-host-adapter.mjs'
 import { handleQuery, admitMessage } from '../lib/index.mjs'
@@ -46,7 +47,7 @@ function fixture() {
           projections: { asOfSeq: 4, values: structuredClone(states.get(sessionId)) } }
       })()
     },
-  })
+  }, createTestPeer())
   return { api, states, calls, presets, setBeforeSelect: fn => { beforeSelect = fn }, setBeforePrompt: fn => { beforePrompt = fn } }
 }
 

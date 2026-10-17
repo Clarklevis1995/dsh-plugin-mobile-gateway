@@ -1,7 +1,9 @@
+import { createTestPeer } from './helpers/peer.mjs'
 import assert from 'node:assert/strict'
 import { createDshHostAdapter } from '../lib/dsh-host-adapter.mjs'
 import { handleQuery } from '../lib/index.mjs'
 
+const peer = createTestPeer()
 const calls = []
 const gateway = {
   async invoke(call) {
@@ -27,7 +29,7 @@ const gateway = {
   },
   async stream() { throw new Error('unexpected stream') },
 }
-const api = createDshHostAdapter(gateway)
+const api = createDshHostAdapter(gateway, peer)
 const query = msg => handleQuery(api, api, null, msg)
 
 const catalog = await query({ type: 'plugin-catalog', requestId: 'catalog-1' })

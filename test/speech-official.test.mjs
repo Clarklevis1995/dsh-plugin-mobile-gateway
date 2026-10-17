@@ -1,3 +1,4 @@
+import { createTestPeer } from './helpers/peer.mjs'
 // 可选契约验证：使用本机已安装的官方 DSH，不下载模型或新增运行依赖。
 // DSH_INSTALL_ROOT=/absolute/path/to/@deepseek-ai/dsh node test/speech-official.test.mjs
 import assert from 'node:assert/strict'
@@ -11,7 +12,7 @@ assert.ok(process.env.DSH_INSTALL_ROOT, 'Set DSH_INSTALL_ROOT to the installed o
 const require = createRequire(path.join(process.env.DSH_INSTALL_ROOT, 'package.json'))
 const { default: SpeechController } = await import(pathToFileURL(require.resolve('@deepseek-ai/dsh-experimental-api-speech-to-text')).href)
 const { version } = require('@deepseek-ai/dsh-experimental-api-speech-to-text/package.json')
-assert.equal(version, '0.2.0-rc.2')
+assert.equal(version, '0.2.1-rc.2')
 let calls = 0
 const controller = { config: { maxAudioBytes: 4194304, maxDurationSeconds: 120 }, ctx: { speechToText: {
   snapshot: () => ({ providers: [{ id: 'sensevoice-local', preparation: { phase: 'ready' } }],
@@ -27,7 +28,7 @@ const host = createDshHostAdapter({
     return SpeechController.prototype.transcribe.call(controller, args.request, signal)
   },
   stream: async () => { throw new Error('not used') },
-})
+}, createTestPeer())
 const manager = createSpeechInputManager(host)
 const wav = Buffer.alloc(364)
 wav.write('RIFF'); wav.writeUInt32LE(356, 4); wav.write('WAVEfmt ', 8)
@@ -44,4 +45,4 @@ assert.equal((await request(wrongSampleRate)).code, 'speech/transcription-failed
 assert.equal((await request(Buffer.from('not a wav'))).code, 'speech/transcription-failed')
 assert.equal(calls, 1, 'Invalid audio must be rejected before provider selection')
 manager.dispose()
-console.log('OFFICIAL SPEECH REMOTE CONTRACT TESTS PASSED (DSH 0.2.0-rc.2; recognizer mocked)')
+console.log('OFFICIAL SPEECH REMOTE CONTRACT TESTS PASSED (DSH 0.2.1-rc.2; recognizer mocked)')

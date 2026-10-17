@@ -1,3 +1,4 @@
+import { createTestConnection } from './helpers/peer.mjs'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import http from 'node:http'
@@ -35,6 +36,7 @@ async function gateway(t, enabled = true) {
       register() { return () => {} },
       registerUpgrade(route) { upgrade = route; return () => {} },
     },
+    connection: createTestConnection(),
     typertGateway: {
       async invoke() { return { items: [] } },
       async stream(request) {

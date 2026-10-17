@@ -1,6 +1,8 @@
 # dsh Mobile Gateway — WebSocket 协议参考
 
-移动端通过经过设备鉴权的 WebSocket 连接与 dsh 通信：订阅 agent 实时输出、发送文字和图片、处理 Human-in-the-loop 提问与操作审批、查询会话/工作区/历史、调整会话配置。本协议由持久化插件 `dsh-plugin-mobile-gateway` 实现。当前源码适配 DSH 0.2.0-rc.2 / Session format 4；移动端实时流接入见 [rc.2 接入说明](docs/dsh-rc2-mobile-integration.md)，插件管理见 [RC2 插件管理对接方案](docs/dsh-0.2.0-rc.2-plugin-management-mobile-integration.md)。
+移动端通过经过设备鉴权的 WebSocket 连接与 dsh 通信：订阅 agent 实时输出、发送文字和图片、处理 Human-in-the-loop 提问与操作审批、查询会话/工作区/历史、调整会话配置。本协议由持久化插件 `dsh-plugin-mobile-gateway` 实现。当前源码适配 DSH 0.2.1-rc.2 / Session format 4；移动端实时流接入见 [rc.2 接入说明](docs/dsh-rc2-mobile-integration.md)，插件管理见 [RC2 插件管理对接方案](docs/dsh-0.2.0-rc.2-plugin-management-mobile-integration.md)。
+
+DSH Remote 要求的 `peer` 由网关在 Host 内部创建并注入，身份沿用已配对设备的本机用户权限，生命周期随插件释放；移动端请求帧不增加 `peer` 字段，`dsh-mobile-v1` 协议不变。
 
 - **本机端点**：`ws://127.0.0.1:3080/ws/mobile`（与 dsh web GUI 同端口）
 - **局域网端点**：`ws://<电脑的私有局域网 IP>:3081/ws/mobile`（插件独立监听，只提供经过鉴权的 WebSocket）
@@ -1175,7 +1177,8 @@ DSH Web 的“深度求索中，用时 22 秒 ···”是客户端文案，不�
 
 | 版本 | 新增 |
 |---|---|
-| v0.10.2（当前源码） | 补齐 `deliverables/presented` 文件卡片实时字段；新增 `file-references-v1` 能力与 `file-resolve` 安全文件引用解析；复用现有分块下载支持移动端预览接入 |
+| v0.10.3（当前源码） | 适配 DSH 0.2.1-rc.2；为 Remote 请求及实时订阅补齐 Connection Peer，修复读取 `signal` 时的空值报错，并随网关停止释放 Peer；移动端协议保持不变 |
+| v0.10.2 | 补齐 `deliverables/presented` 文件卡片实时字段；新增 `file-references-v1` 能力与 `file-resolve` 安全文件引用解析；复用现有分块下载支持移动端预览接入 |
 | v0.10.1 | 新增官方 speech Remote 语音输入桥接；模型准备与状态同步；移动端音频转文字与取消转写；连接关闭时清理语音任务 |
 | v0.10.0 | 响应式居中控制面板与主题同步；自定义下拉菜单；独立配对模态窗口与缩放动画；按运行实例关闭重启提醒；在线设备折叠列表与移动端设备名称上报；Tunnel 配置交互优化 |
 | v0.9.0 | DSH 0.2.0-rc.2 插件管理；PC 端 Cloudflare Quick / 命名 Tunnel 及独立重启；插件私有 `cloudflared` 缓存及校验；配对入口选择指引；网关重启与 DSH Web 停止工具 |

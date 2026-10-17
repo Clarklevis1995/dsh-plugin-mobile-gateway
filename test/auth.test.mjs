@@ -1,3 +1,4 @@
+import { createTestConnection } from './helpers/peer.mjs'
 import { createRequire } from 'node:module'
 
 const require = createRequire(import.meta.url)
@@ -103,6 +104,7 @@ function expectRejected(url, options = {}) {
   })
   const ctx = {
     webServer,
+    connection: createTestConnection(),
     typertGateway: {
       async invoke(request) {
         if (request.namespace === 'speech' && request.method === 'catalog') return {

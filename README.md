@@ -6,11 +6,13 @@
 
 DeepSeek Harness 的设备鉴权移动网关，支持会话与实时事件、排队消息同步及编辑/删除/Steer、Session 归档和重命名的双向同步、停止当前生成并稍后继续、任务列表和当前 Goal 同步及管理、服务端驱动的命令和技能菜单、Human-in-the-loop、图片及文件传输。安装后，Harness WebUI 左侧边栏会出现“移动设备”入口，可直接开启网关、生成配对二维码和管理可信设备。
 
-> 当前源码以 **DSH 0.2.0-rc.2** 为适配基线，使用 Session format 4；旧版历史游标需重新取得基线。
+> 当前源码以 **DSH 0.2.1-rc.2** 为适配基线，需要 Connection Peer 接口，使用 Session format 4；旧版历史游标需重新取得基线。
 >
 > 实时流已改为独立 `assistant-stream` 帧，移动端需要按 [rc.2 接入说明](docs/dsh-rc2-mobile-integration.md) 更新订阅、缓存与分页处理。当前修改尚未发布。
 >
-> v0.10.2（当前源码）：新增文件卡片事件透传与安全文件引用解析，复用现有分块下载，为移动端文件卡片和正文文件链接预览提供协议支持。App 接入方式见 [文件卡片与预览接入说明](docs/file-cards-mobile-integration.md)。
+> v0.10.3（当前源码）：适配 DSH 0.2.1-rc.2，为 Remote 请求及实时订阅补齐 Connection Peer，修复 `Cannot read properties of undefined (reading 'signal')` 报错，并在网关停止时释放 Peer。移动端协议保持不变。
+>
+> v0.10.2：新增文件卡片事件透传与安全文件引用解析，复用现有分块下载，为移动端文件卡片和正文文件链接预览提供协议支持。App 接入方式见 [文件卡片与预览接入说明](docs/file-cards-mobile-integration.md)。
 >
 > v0.10.1：新增官方语音输入接入，支持语音模型准备与状态同步、移动端音频转文字、取消转写及连接关闭后的任务清理。通过官方 speech Remote 处理识别，移动网关无需打包 ASR 模型。
 >
@@ -24,7 +26,15 @@ DeepSeek Harness 的设备鉴权移动网关，支持会话与实时事件、排
 
 ## 协议与 DSH 兼容层
 
-移动端连接的是本项目维护的 `dsh-mobile-v1`，不是 DSH 的内部 Remote 协议。插件内部通过独立 Host Adapter 对接 DSH 0.2.0-rc.2 的 Remote Gateway；Session、Workspace、Settings、Commands、Goals、Schedule、Permission Presets、Plugin Manager 等 namespace 和严格参数只存在于该适配层。插件管理的请求帧及 DSH Mobile 页面方案见 [RC2 插件管理对接方案](docs/dsh-0.2.0-rc.2-plugin-management-mobile-integration.md)。
+移动端连接的是本项目维护的 `dsh-mobile-v1`，不是 DSH 的内部 Remote 协议。插件内部通过独立 Host Adapter 对接 DSH 0.2.1-rc.2 的 Remote Gateway；Session、Workspace、Settings、Commands、Goals、Schedule、Permission Presets、Plugin Manager 等 namespace 和严格参数只存在于该适配层。插件管理的请求帧及 DSH Mobile 页面方案见 [RC2 插件管理对接方案](docs/dsh-0.2.0-rc.2-plugin-management-mobile-integration.md)。
+
+DSH 0.2.1-rc.2 要求每次 Remote 调用携带 `peer`。网关通过 `ctx.connection.createPeer()` 创建一个随插件释放的本机用户 Peer，普通请求、首帧读取和实时订阅都由 Host Adapter 注入它；移动端不能设置调用方身份。问答与审批继续由网关的 Host 监听器处理。旧网关漏传此字段时会出现 `Cannot read properties of undefined (reading 'signal')`，升级 DSH 后需重新安装本源码版本并重启 `dsh web`，手机无需更改协议。
+
+可用本机已安装的官方 DSH 验证此契约（真实 Gateway / Connection，业务服务使用测试数据，不读写用户会话）：
+
+```bash
+DSH_INSTALL_ROOT=/absolute/path/to/@deepseek-ai/dsh node test/host-official.test.mjs
+```
 
 配对鉴权和 `dsh-mobile-v1` / `hello.protocol = 3` 保持不变。新版实时 token 不占用持久事件的 `seq`：客户端显式订阅 `assistantStream: true`，接收原子的 `session-snapshot` 和独立增量；普通 `event` 只携带持久事件。未接入新订阅的客户端只能收到持久消息。
 

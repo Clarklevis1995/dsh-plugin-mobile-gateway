@@ -1,3 +1,4 @@
+import { createTestPeer } from './helpers/peer.mjs'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import { createDshHostAdapter, readHistoryRecords } from '../lib/dsh-host-adapter.mjs'
@@ -17,9 +18,12 @@ const packed = {
 assert.deepEqual(readHistoryRecords([packed]), [packed.event])
 assert.throws(() => readHistoryRecords([{ type: 'chunks', event: packed.event }]), /requires event records/)
 
+const peer = createTestPeer()
 const calls = []
 const gateway = {
   async invoke(call) {
+    assert.equal(call.peer, peer)
+    assert.equal(call.peer.signal.aborted, false)
     calls.push(call)
     if (call.namespace === 'session' && call.method === 'page') {
       return { records: [{ type: 'event', event: { type: 'user/message', seq: 1, time: 1, data: {} } }], hasMore: false }
@@ -46,7 +50,10 @@ const gateway = {
     return { accepted: true }
   },
   async stream(call) {
+    assert.equal(call.peer, peer)
+    assert.equal(call.peer.signal.aborted, false)
     calls.push(call)
+    if (call.namespace === 'speech' || call.method === 'control') return (async function* () {})()
     if (call.namespace === 'workspace') {
       return (async function* () {
         yield { type: 'baseline', value: { items: [{ workspaceId: 'w1' }], archivedSessionIds: [] } }
@@ -68,7 +75,8 @@ const gateway = {
   },
 }
 
-const host = createDshHostAdapter(gateway)
+const host = createDshHostAdapter(gateway, peer)
+assert.throws(() => createDshHostAdapter(gateway), /requires a DSH Connection Peer/)
 
 // 官方实验性语音 Remote 使用各自的真实参数名，并传递取消信号。
 {
@@ -80,11 +88,11 @@ const host = createDshHostAdapter(gateway)
   await host.speech.configure({ language: 'zh' }, signal)
   await host.speech.cancelPreparation('sensevoice-local', signal)
   assert.deepEqual(calls.filter(call => call.namespace === 'speech'), [
-    { namespace: 'speech', method: 'catalog', args: {}, signal },
-    { namespace: 'speech', method: 'transcribe', args: { request }, signal },
-    { namespace: 'speech', method: 'prepare', args: { providerId: 'sensevoice-local', options: { downloadSource: 'https://hf-mirror.com' } }, signal },
-    { namespace: 'speech', method: 'configure', args: { patch: { language: 'zh' } }, signal },
-    { namespace: 'speech', method: 'cancelPreparation', args: { providerId: 'sensevoice-local' }, signal },
+    { peer, namespace: 'speech', method: 'catalog', args: {}, signal },
+    { peer, namespace: 'speech', method: 'transcribe', args: { request }, signal },
+    { peer, namespace: 'speech', method: 'prepare', args: { providerId: 'sensevoice-local', options: { downloadSource: 'https://hf-mirror.com' } }, signal },
+    { peer, namespace: 'speech', method: 'configure', args: { patch: { language: 'zh' } }, signal },
+    { peer, namespace: 'speech', method: 'cancelPreparation', args: { providerId: 'sensevoice-local' }, signal },
   ])
 }
 
@@ -195,12 +203,14 @@ console.log('DSH HOST ADAPTER TESTS PASSED')
 
 const followAbort = new AbortController()
 await host.openSessionStream('s1', followAbort.signal)
-assert.deepEqual(calls.at(-1), { namespace: 'session', method: 'follow',
+assert.deepEqual(calls.at(-1), { peer, namespace: 'session', method: 'follow',
   args: { request: { address: { kind: 'session', sessionId: 's1' }, maxMessages: 12, assistantStream: true } }, signal: followAbort.signal })
 followAbort.abort()
+await host.openControlStream(new AbortController().signal)
+await host.speech.follow(new AbortController().signal)
 const badHost = createDshHostAdapter({ invoke: async () => ({}), stream: async () => (async function* () {
   yield { type: 'snapshot', header: { id: 's1', version: 2 }, cursor: 0, records: [], projections: {} }
-})() })
+})() }, peer)
 await assert.rejects(() => badHost.sessions.history({ sessionId: 's1' }), { code: 'unsupported-session-format' })
 
 // Reading a snapshot must release its follow even with a caller-owned signal.
@@ -219,7 +229,7 @@ await assert.rejects(() => badHost.sessions.history({ sessionId: 's1' }), { code
         return { done: true }
       },
     }),
-  })
+  }, peer)
   await snapshotHost.sessions.history({ sessionId: 's1' }, caller.signal)
   assert.equal(returned, true)
   assert.equal(caller.signal.aborted, false)

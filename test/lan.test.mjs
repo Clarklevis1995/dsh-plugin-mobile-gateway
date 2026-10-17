@@ -1,3 +1,4 @@
+import { createTestConnection } from './helpers/peer.mjs'
 import { createRequire } from 'node:module'
 
 const require = createRequire(import.meta.url)
@@ -74,6 +75,7 @@ async function waitForLanStatus(base) {
   })
   const ctx = {
     webServer,
+    connection: createTestConnection(),
     typertGateway: {
       async invoke() { throw new Error('unexpected Remote invocation') },
       async stream(request) {

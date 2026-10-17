@@ -1,3 +1,4 @@
+import { createTestConnection } from './helpers/peer.mjs'
 import { createRequire } from 'node:module'
 
 const require = createRequire(import.meta.url)
@@ -248,6 +249,7 @@ const ctx = {
   on(name, fn) { listeners[name] = fn; return () => {} },
   effect(fn) { disposer = fn() },
 }
+ctx.connection = createTestConnection()
 ctx.webServer = webServer
 const invokeCalls = []
 const controlFrames = []
@@ -260,6 +262,8 @@ ctx.agentDefaultModel = {
 }
 ctx.typertGateway = {
   async invoke(req) {
+    assert.equal(req.peer, ctx.connection.peers[0])
+    assert.equal(req.peer.signal.aborted, false)
     invokeCalls.push(req)
     if (req.namespace === 'agentPresets' && req.method === 'select') {
       assert.equal(req.args.agentId, 'preset-session')
@@ -336,6 +340,8 @@ ctx.typertGateway = {
     throw new Error(`unexpected Remote call ${req.namespace}/${req.method}`)
   },
   async stream(req) {
+    assert.equal(req.peer, ctx.connection.peers[0])
+    assert.equal(req.peer.signal.aborted, false)
     if (req.namespace === 'session' && req.method === 'follow' && req.args.request.address.sessionId === 'preset-session') {
       return (async function* () {
         yield { type: 'snapshot', header: { version: 4, id: 'preset-session' }, cursor: 9500, records: [], hasMore: false,
@@ -597,7 +603,7 @@ function waitFor(pred, timeout) { return new Promise((res) => { const t0 = Date.
       assert.equal(controls.find(f => f.kind === 'hello').capabilities.includes('split-channels'), true)
       assert.equal(controls.find(f => f.kind === 'hello').capabilities.includes('schedule-management'), true)
       assert.equal(controls.find(f => f.kind === 'hello').capabilities.includes('plugin-management-v1'), true)
-      assert.equal(controls.find(f => f.kind === 'hello').dshVersion, '0.2.0-rc.2')
+      assert.equal(controls.find(f => f.kind === 'hello').dshVersion, '0.2.1-rc.2')
       control.send(JSON.stringify({ type: 'plugin-catalog', requestId: 'unauthenticated-catalog' }))
       assert.equal(await waitFor(() => controls.some(f => f.requestId === 'unauthenticated-catalog'), 2000), true)
       assert.equal(controls.find(f => f.requestId === 'unauthenticated-catalog').code, 'authentication-required')
@@ -1163,6 +1169,7 @@ function waitFor(pred, timeout) { return new Promise((res) => { const t0 = Date.
     const failed = results.filter(([, ok]) => !ok)
     console.log(failed.length === 0 ? '\nFULL GATEWAY DISPATCH TESTS PASSED (' + results.length + ')' : `\n${failed.length} FAILED`)
     ws.close(); disposer(); server.close()
+    assert.equal(ctx.connection.peers[0].signal.aborted, true)
     process.exit(failed.length === 0 ? 0 : 1)
   }
   sendNext()
