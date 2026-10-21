@@ -663,6 +663,21 @@ let image = [
 | `tasks` | `sessionId` | 当前任务列表（`todos` projection） |
 | `goal` | `sessionId` | 当前目标及其 CAS 版本（`goal` projection） |
 
+### 会话列表投影
+
+`sessions.items[]` 保留 Host 返回的会话元信息（包括 `sessionId`、`updatedAt`、`running`、`blank`、`cwd`、`agentPreset`、`parentSessionId` 和 `origin`）。每项 `projections` 仅保留原有的 `asOfSeq` 和 `values.title`，不随列表下发大纲、任务、上下文等完整投影，避免大量会话导致公网隧道传输超时。标题仍从 `projections.values.title` 读取，缺失或 `null` 时沿用客户端的默认标题规则。
+
+```json
+{ "type": "sessions" }
+→ { "kind": "sessions", "items": [
+    { "sessionId": "session-abc", "updatedAt": 1786937352, "running": false, "blank": false,
+      "cwd": "/workspace", "agentPreset": "standard",
+      "projections": { "asOfSeq": 200, "values": { "title": "排查网关连接" } } }
+  ] }
+```
+
+此裁剪仅用于 `sessions` 响应，不修改 Host 数据；`history`、`session-snapshot`、控制投影基线及实时投影通知继续提供各自原有的详情。现有客户端无需修改请求或标题解析方式。
+
 ### Session 归档与重命名
 
 在 App 端归档 Session：
@@ -708,9 +723,26 @@ WebUI、App 或其他客户端造成的变化通过以下帧主动推送：
 - `view: "conversation"`：**对话裁剪模式**——隐藏系统消息与 request/header、request/context，移除 Assistant 事件的内嵌 `data.stream`，同时保留 `data.finish`（结束类型和结构化失败原因）；`tool/result` 原始文本块截断到 2000 字符，另用 `data.output/outputTruncated` 保留最多约 16000 字符的首尾输出
 - 分页：`hasMore` 为真时用 `beforeSeq: nextBeforeSeq, historyFormatVersion: 4` 请求更早一页
 
+### 会话轮次大纲
+
+`hello.capabilities` 的 `turn-outline-v1` 表示支持完整轮次大纲传输；不要求 Host 开启全文搜索，也不保证自定义 Host profile 挂载了大纲插件。App 可从 `history` / `session-snapshot` 的 `projections.values.turnOutline` 读取数组，每项为 `{turn, seq, prompt, response}`；`seq` 指向 `turn/start`，提示词和回复分别最多 50 / 120 个 UTF-16 code unit，回复在轮次结束后提交。正文分页和字节裁剪不会裁掉大纲。
+
+控制连接（兼容 legacy 单连接）的 `projection-baseline.projections[sessionId].values` 新增 `turnOutline`，缺少该投影时为 `null`。Host 大纲变化时发送完整替换值：
+
+```json
+{ "kind": "turn-outline-updated", "sessionId": "s1", "asOfSeq": 40,
+  "turnOutline": [{ "turn": 1, "seq": 10, "prompt": "调整输入框阴影", "response": "已减轻阴影。" }] }
+```
+
+该通知不受 `subscribe.sessionId` 过滤，不发往 conversation 连接。`[]` 为有效空大纲；`null` 使旧控制大纲失效并降级到已加载轮次。Host 控制流重建会整体替换基线，并为被移除会话发送 `null` 失效通知，沿用其旧缓存水位。控制基线只覆盖 Host 当前控制集合，缺少冷会话不表示会话被删除；进入冷会话仍从其历史快照读取大纲。新控制连接会获得最近缓存的大纲。
+
+`asOfSeq` 是投影切点，不是连续通知序列。数组整体替换，不能 append；App 需处理控制基线代际与历史响应乱序。完整帧示例、触屏交互、分页跳转、版本重建和验收步骤见 [App 会话轮次导航接入指南](docs/turn-outline-app-integration.md)。
+
+### `history` 响应示例
+
 ```json
 → { "kind": "history", "sessionId": "session-abc", "events": [ ...原始事件... ],
-    "historyFormatVersion": 3, "cursor": 200,
+    "historyFormatVersion": 4, "cursor": 200,
     "bytes": 3521, "view": "conversation", "hasMore": true, "nextBeforeSeq": 128,
     "projections": { "asOfSeq": 200, "values": { "tokenUsage": {...}, "contextPressure": {...}, "permissions": {...}, "sessionStats": {...} } } }
 ```
@@ -1110,6 +1142,8 @@ Control/旧单连接接收全局模式状态增量，不受所订阅会话过滤
 | `session-archives` | Host 的完整 Session 归档集合在连接初始化或 WebUI/App 归档后变化 |
 | `session-title-changed` | 任意客户端写入新的持久化 Session 名称 |
 | `tasks-updated` / `goal-updated` | 当前会话的任务列表或目标 projection 发生变化 |
+| `projection-baseline` | 控制投影集合，含 `todos/goal/turnOutline`；连接初始化及 Host 控制流重建时发送 |
+| `turn-outline-updated` | 指定 Session 的完整轮次大纲替换值或 `null` 失效通知；仅控制/legacy 连接 |
 | `schedule-changed` | Host 定时任务目录已变化；无载荷，重新请求 `schedule-catalog` 或当前 Session 的 `schedule-list` |
 | `question-requested` / `question-resolved` | Human-in-the-loop 问题请求与最终状态 |
 | `approval-requested` / `approval-resolved` | Human-in-the-loop 操作审批请求与最终状态 |
@@ -1177,7 +1211,8 @@ DSH Web 的“深度求索中，用时 22 秒 ···”是客户端文案，不�
 
 | 版本 | 新增 |
 |---|---|
-| v0.10.3（当前源码） | 适配 DSH 0.2.1-rc.2；为 Remote 请求及实时订阅补齐 Connection Peer，修复读取 `signal` 时的空值报错，并随网关停止释放 Peer；移动端协议保持不变 |
+| v0.10.4（当前源码） | 精简 `sessions` 列表投影，仅保留 `asOfSeq` 和 `values.title`，修复大量会话通过公网隧道传输时超时的问题；保留会话元信息和历史完整投影，现有移动客户端无需配套修改 |
+| v0.10.3 | 适配 DSH 0.2.1-rc.2；为 Remote 请求及实时订阅补齐 Connection Peer，修复读取 `signal` 时的空值报错，并随网关停止释放 Peer；移动端协议保持不变 |
 | v0.10.2 | 补齐 `deliverables/presented` 文件卡片实时字段；新增 `file-references-v1` 能力与 `file-resolve` 安全文件引用解析；复用现有分块下载支持移动端预览接入 |
 | v0.10.1 | 新增官方 speech Remote 语音输入桥接；模型准备与状态同步；移动端音频转文字与取消转写；连接关闭时清理语音任务 |
 | v0.10.0 | 响应式居中控制面板与主题同步；自定义下拉菜单；独立配对模态窗口与缩放动画；按运行实例关闭重启提醒；在线设备折叠列表与移动端设备名称上报；Tunnel 配置交互优化 |

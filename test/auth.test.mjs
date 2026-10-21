@@ -270,6 +270,7 @@ function expectRejected(url, options = {}) {
     'assistant-stream-v1',
     'history-format-version',
     'projection-baseline',
+    'turn-outline-v1',
     'images',
     'session-create',
     'session-agent-preset',

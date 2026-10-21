@@ -12,7 +12,26 @@ const load = spec => import(pathToFileURL(require.resolve(spec)).href)
 const { Context, Service } = await load('@deepseek-ai/cordis')
 const { HostConnectionService } = await load('@deepseek-ai/dsh-client-connection')
 const { TypertGatewayService } = await load('@deepseek-ai/dsh-api-gateway')
+const { apply: installTurnOutline } = await load('@deepseek-ai/dsh-session-turn-outline')
 assert.equal(require('@deepseek-ai/dsh-api-gateway/package.json').version, DSH_VERSION)
+
+// 使用官方投影折叠生成大纲，验证预览和落定语义，并通过真实 Gateway 传输。
+let outlineDefinition
+installTurnOutline({ sessionProjections: { register(definition) { outlineDefinition = definition } } })
+let outlineState = outlineDefinition.init()
+const foldOutline = event => {
+  outlineState = outlineDefinition.apply(outlineState, event)
+  return outlineDefinition.wire.view(outlineState)
+}
+foldOutline({ type: 'turn/start', seq: 1, data: { turn: 0 } })
+foldOutline({ type: 'user/message', seq: 2, data: {
+  source: { kind: 'user' }, content: [{ type: 'text', text: '调整  输入框\n阴影' }],
+} })
+const pendingOutline = foldOutline({ type: 'assistant/message', seq: 3,
+  data: { message: { content: [{ type: 'text', text: '已减轻  阴影。' }] } } })
+assert.deepEqual(pendingOutline, [{ turn: 0, seq: 1, prompt: '调整 输入框 阴影', response: '' }])
+const finalOutline = foldOutline({ type: 'turn/end', seq: 4, data: { turn: 0 } })
+assert.deepEqual(finalOutline, [{ turn: 0, seq: 1, prompt: '调整 输入框 阴影', response: '已减轻 阴影。' }])
 
 const ctx = new Context()
 const peer = HostConnectionService.prototype.createPeer.call({ ctx }, {
@@ -36,12 +55,21 @@ class SessionFixture extends Service {
     seen.push('follow')
     try {
       yield { type: 'snapshot', header: { version: 4, id: request.address.sessionId },
-        cursor: -1, records: [], hasMore: false, projections: { asOfSeq: -1, values: {} } }
+        cursor: 4, records: [], hasMore: false, projections: { asOfSeq: 4, values: { turnOutline: finalOutline } } }
       await new Promise(resolve => {
         signal.addEventListener('abort', resolve, { once: true })
         if (signal.aborted) resolve()
       })
     } finally { closed.push('follow') }
+  }
+  async *control(signal) {
+    assert.equal(this.ctx.invocation.peer, peer)
+    assert.equal(signal.aborted, false)
+    seen.push('control')
+    yield { type: 'baseline', value: { projections: {
+      s1: { asOfSeq: 3, values: { turnOutline: pendingOutline } },
+    } } }
+    yield { type: 'projection', sessionId: 's1', key: 'turnOutline', seq: 4, value: finalOutline }
   }
 }
 class WorkspaceFixture extends Service {
@@ -63,6 +91,7 @@ const descriptors = new Map()
 for (const [namespace, method, service, names, stream] of [
   ['session', 'list', 'sessionController', ['_request'], false],
   ['session', 'follow', 'sessionController', ['request'], true],
+  ['session', 'control', 'sessionController', [], true],
   ['workspace', 'follow', 'workspaceController', [], true],
 ]) descriptors.set(`${namespace}/${method}`, {
   id: `${namespace}/${method}`, namespace, method, service,
@@ -82,10 +111,16 @@ try {
   const host = createDshHostAdapter(gateway, peer)
   assert.deepEqual(await host.sessions.list(), { items: [{ sessionId: 's1' }] })
   const caller = new AbortController()
-  assert.equal((await host.sessions.history({ sessionId: 's1' }, caller.signal)).cursor, -1)
+  const history = await host.sessions.history({ sessionId: 's1' }, caller.signal)
+  assert.equal(history.cursor, 4)
+  assert.deepEqual(history.projections.values.turnOutline, finalOutline)
   assert.equal(caller.signal.aborted, false)
   assert.deepEqual(closed, ['follow'], '读取首帧后应关闭官方订阅')
   assert.deepEqual(await host.workspace.list(), { items: [], archivedSessionIds: [] })
+  const controls = []
+  for await (const frame of await host.openControlStream(caller.signal)) controls.push(frame)
+  assert.deepEqual(controls[0].value.projections.s1.values.turnOutline, pendingOutline)
+  assert.deepEqual(controls[1], { type: 'projection', sessionId: 's1', key: 'turnOutline', seq: 4, value: finalOutline })
   const stream = await host.openSessionStream('s1', caller.signal)
   const iterator = stream[Symbol.asyncIterator]()
   assert.equal((await iterator.next()).value.type, 'snapshot')
@@ -96,8 +131,8 @@ try {
   assert.equal(peer.signal.aborted, true)
   assert.equal(caller.signal.aborted, false)
   await assert.rejects(() => host.sessions.list(), { code: 'gateway/peer-disposed' })
-  assert.deepEqual(seen, ['list', 'follow', 'workspace', 'follow'])
+  assert.deepEqual(seen, ['list', 'follow', 'workspace', 'control', 'follow'])
 } finally {
   await peer.dispose()
 }
-console.log(`OFFICIAL HOST PEER CONTRACT TESTS PASSED (DSH ${DSH_VERSION}; business fixtures)`)
+console.log(`OFFICIAL HOST PEER AND TURN OUTLINE CONTRACT TESTS PASSED (DSH ${DSH_VERSION}; business fixtures)`)

@@ -1,7 +1,7 @@
 {
   "name": "dsh-plugin-mobile-gateway",
-  "version": "0.10.3",
-  "description": "DeepSeek Harness 移动网关，支持安全设备配对、实时会话同步、插件管理、官方语音输入、文件卡片与安全文件预览、局域网及 Cloudflare Tunnel，以及自适应深浅色控制面板。0.10.3 适配 DSH 0.2.1-rc.2，为 Remote 请求及实时订阅补齐 Connection Peer，修复读取 signal 时的空值报错，并在网关停止时释放 Peer。",
+  "version": "0.10.4",
+  "description": "DeepSeek Harness 移动网关，支持安全设备配对、实时会话同步、插件管理、官方语音输入、文件卡片与安全文件预览、局域网及 Cloudflare Tunnel，以及自适应深浅色控制面板。0.10.4 精简会话列表投影，仅保留标题与投影切点，修复大量会话通过公网隧道传输时超时的问题；保留会话元信息和历史完整投影，现有移动客户端无需配套修改。",
   "main": "lib/index.mjs",
   "files": [
     "bin",

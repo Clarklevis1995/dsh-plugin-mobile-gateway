@@ -10,7 +10,9 @@ DeepSeek Harness 的设备鉴权移动网关，支持会话与实时事件、排
 >
 > 实时流已改为独立 `assistant-stream` 帧，移动端需要按 [rc.2 接入说明](docs/dsh-rc2-mobile-integration.md) 更新订阅、缓存与分页处理。当前修改尚未发布。
 >
-> v0.10.3（当前源码）：适配 DSH 0.2.1-rc.2，为 Remote 请求及实时订阅补齐 Connection Peer，修复 `Cannot read properties of undefined (reading 'signal')` 报错，并在网关停止时释放 Peer。移动端协议保持不变。
+> v0.10.4（当前源码）：精简会话列表投影，仅保留标题与投影切点，修复大量会话通过公网隧道传输时超时的问题；保留会话元信息和历史完整投影，现有移动客户端无需配套修改。
+>
+> v0.10.3：适配 DSH 0.2.1-rc.2，为 Remote 请求及实时订阅补齐 Connection Peer，修复 `Cannot read properties of undefined (reading 'signal')` 报错，并在网关停止时释放 Peer。移动端协议保持不变。
 >
 > v0.10.2：新增文件卡片事件透传与安全文件引用解析，复用现有分块下载，为移动端文件卡片和正文文件链接预览提供协议支持。App 接入方式见 [文件卡片与预览接入说明](docs/file-cards-mobile-integration.md)。
 >
@@ -47,6 +49,8 @@ DSH_INSTALL_ROOT=/absolute/path/to/@deepseek-ai/dsh node test/host-official.test
 - 协议文档：[PROTOCOL.md](PROTOCOL.md)
 
 当前源码新增会话模式选择：App 创建空白 Session 后，可查询并修改该 Session 的 Agent preset；首次对话后锁定。通过 `session-agent-preset` 能力发现接入，详见 [App 接入说明](docs/session-agent-preset-app-integration.md)。App 界面需按此说明接入，本次源码尚未发布。
+
+当前源码新增 `turn-outline-v1`：透传 WebUI 使用的完整轮次大纲及实时更新，支持 App 在未加载全部正文时展示会话刻度、问答预览并按需分页跳转。控制连接重建和新设备连接会恢复大纲基线；Host 未提供大纲时可降级为已加载轮次导航。详见 [App 会话轮次导航接入指南](docs/turn-outline-app-integration.md)。App 界面需单独接入，本次源码尚未发布。
 
 ## 多网关第一阶段（当前源码）
 

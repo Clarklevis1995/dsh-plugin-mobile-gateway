@@ -10,6 +10,63 @@ const crypto = require('node:crypto')
 const plugin = (await import('../lib/index.mjs')).default
 const { handleQuery } = await import('../lib/index.mjs')
 const assert = await import('node:assert/strict')
+
+// 会话列表只传标题投影，大量会话不能把完整投影带到公网连接。
+{
+  const items = Array.from({ length: 855 }, (_, index) => Object.freeze({
+    sessionId: `session-${index}`, updatedAt: index, running: index === 0, blank: false,
+    cwd: '/workspace', agentPreset: 'standard', parentSessionId: null, origin: 'user',
+    projections: Object.freeze({ asOfSeq: 42, extra: 'discard', values: Object.freeze({
+      title: `会话 ${index} 👏`,
+      turnOutline: [{ turn: 1, seq: 1, prompt: '问题', response: 'x'.repeat(16_000) }],
+      todos: [{ content: '任务', status: 'pending' }],
+      contextPressure: { pressureTokens: 1000 },
+    }) }),
+  }))
+  const source = Object.freeze({ items: Object.freeze(items), archivedSessionIds: ['archived'] })
+  const originalJson = JSON.stringify(source)
+  const api = { sessions: {
+    list: async () => source,
+    history: async () => ({ historyFormatVersion: 4, cursor: 42, events: [], hasMore: false,
+      projections: items[0].projections }),
+  } }
+  const frame = await handleQuery(api, null, null, { type: 'sessions' })
+  assert.deepEqual(frame, { kind: 'sessions', archivedSessionIds: ['archived'],
+    items: items.map(item => ({ ...item,
+      projections: { asOfSeq: 42, values: { title: item.projections.values.title } },
+    })) })
+  const originalBytes = Buffer.byteLength(originalJson)
+  const compactBytes = Buffer.byteLength(JSON.stringify(frame))
+  assert.ok(originalBytes > 13 * 1024 * 1024)
+  assert.ok(compactBytes < 512 * 1024)
+  assert.ok(compactBytes < originalBytes * 0.05)
+  assert.equal(JSON.stringify(source), originalJson, '不能修改 Host 返回的原始数据')
+  const history = await handleQuery(api, null, null, { type: 'history', sessionId: 'session-0' })
+  assert.deepEqual(history.projections, items[0].projections, '历史仍保留完整投影')
+  console.log(`PASS compact sessions: ${originalBytes} B -> ${compactBytes} B`)
+
+  for (const projections of [undefined, null, { asOfSeq: 0, values: {} },
+    { asOfSeq: 1, values: { title: null, turnOutline: [] } },
+    { values: { title: '', todos: [] } }]) {
+    const item = { sessionId: 'untitled', updatedAt: 0, running: false, blank: true,
+      ...(projections === undefined ? {} : { projections }) }
+    api.sessions.list = async () => ({ items: [item] })
+    const result = await handleQuery(api, null, null, { type: 'sessions' })
+    const expected = projections ? {
+      ...(projections.asOfSeq === undefined ? {} : { asOfSeq: projections.asOfSeq }),
+      values: Object.hasOwn(projections.values, 'title') ? { title: projections.values.title } : {},
+    } : projections
+    assert.deepEqual(result.items, [{ ...item,
+      ...(projections === undefined ? {} : { projections: expected }) }])
+  }
+  api.sessions.list = async () => ({ items: [] })
+  assert.deepEqual(await handleQuery(api, null, null, { type: 'sessions' }), { kind: 'sessions', items: [] })
+  api.sessions.list = async () => { throw { code: 'unavailable', message: 'Host unavailable' } }
+  assert.deepEqual(await handleQuery(api, null, null, { type: 'sessions' }), {
+    kind: 'error', code: 'unavailable', message: 'Host unavailable', requestType: 'sessions',
+  })
+}
+
 // Delivery declarations must survive the conversation history projection.
 {
   const delivery = { type: 'deliverables/presented', seq: 4, time: 4,
@@ -200,7 +257,7 @@ function fakeApi() {
             ok: true,
             value: {
               items: [
-                { sessionId: 's1', cwd: fileDownloadRoot, updatedAt: 1, running: false, blank: false, projections: { values: { turnOutline: [{ response: '鼓掌 ' + String.fromCharCode(0xd83d) + '…', prompt: '👏' }] } } },
+                { sessionId: 's1', cwd: fileDownloadRoot, updatedAt: 1, running: false, blank: false, projections: { asOfSeq: 42, values: { title: '鼓掌 👏 ' + String.fromCharCode(0xd83d) + '…', turnOutline: [{ response: '鼓掌 ' + String.fromCharCode(0xd83d) + '…', prompt: '👏' }] } } },
                 { sessionId: 's2', cwd: fileDownloadRoot, updatedAt: 2, running: false, blank: false },
               ],
             },
@@ -253,6 +310,7 @@ ctx.connection = createTestConnection()
 ctx.webServer = webServer
 const invokeCalls = []
 const controlFrames = []
+const initialTurnOutline = [{ turn: 1, seq: 1, prompt: '调整输入框阴影', response: '已减轻阴影。' }]
 const workspaceFrames = []
 const liveFollows = new Map()
 const savedSelections = []
@@ -390,7 +448,7 @@ ctx.typertGateway = {
           type: 'baseline',
           value: {
             projections: {
-              s1: { asOfSeq: 92, values: { inbox: {
+              s1: { asOfSeq: 92, values: { turnOutline: initialTurnOutline, inbox: {
                 'next-turn': [{ id: 'message-1', role: 'user', source: { kind: 'user', rpcId: 'prompt-1' }, content: [{ type: 'text', text: '原消息' }] }],
                 'next-step': [],
               } } },
@@ -494,7 +552,9 @@ function waitFor(pred, timeout) { return new Promise((res) => { const t0 = Date.
     const prefix = { revision: 4, activeAttempt: { attemptId: 'active', turn: 61, step: 1,
       startedAfterSeq: 65, nextIndex: 1,
       stream: [{ type: 'text-chunks', time0: 100, index: 0, texts: ['继续生成'], dt: [] }] } }
-    const projections = { asOfSeq: 65, values: { todos: [{ content: '任务', status: 'completed' }] } }
+    const projections = { asOfSeq: 65, values: { todos: [{ content: '任务', status: 'completed' }],
+      turnOutline: records.map(({ event }) => ({ turn: event.data.turn, seq: event.seq,
+        prompt: `第 ${event.data.turn} 轮`, response: '预览' })) } }
     const state = { signals: [], frames: [], snapshot: {
       type: 'snapshot', header: { version: 4, id: sessionId }, cursor: 65,
       records, hasMore: false, projections, assistantStream: prefix,
@@ -603,6 +663,37 @@ function waitFor(pred, timeout) { return new Promise((res) => { const t0 = Date.
       assert.equal(controls.find(f => f.kind === 'hello').capabilities.includes('split-channels'), true)
       assert.equal(controls.find(f => f.kind === 'hello').capabilities.includes('schedule-management'), true)
       assert.equal(controls.find(f => f.kind === 'hello').capabilities.includes('plugin-management-v1'), true)
+      assert.equal(controls.find(f => f.kind === 'hello').capabilities.includes('turn-outline-v1'), true)
+      assert.equal(await waitFor(() => controls.some(f => f.kind === 'projection-baseline'), 2000), true)
+      assert.deepEqual(controls.find(f => f.kind === 'projection-baseline').projections.s1.values.turnOutline, initialTurnOutline)
+      assert.equal(conversations.some(f => f.kind === 'projection-baseline'), false)
+      // 大纲更新走控制连接，不受旧单连接的会话订阅过滤。
+      ws.send(JSON.stringify({ type: 'subscribe', sessionId: 'another-session' }))
+      assert.equal(await waitFor(() => got.some(f => f.kind === 'subscribed' && f.sessionId === 'another-session'), 2000), true)
+      const updatedOutline = [...initialTurnOutline, { turn: 2, seq: 93, prompt: '继续调整', response: '' }]
+      controlFrames.push({ type: 'projection', sessionId: 's1', key: 'turnOutline', value: updatedOutline, seq: 93 })
+      assert.equal(await waitFor(() => controls.some(f => f.kind === 'turn-outline-updated' && f.asOfSeq === 93)
+        && got.some(f => f.kind === 'turn-outline-updated' && f.asOfSeq === 93), 2000), true)
+      assert.deepEqual(controls.find(f => f.kind === 'turn-outline-updated' && f.asOfSeq === 93).turnOutline, updatedOutline)
+      // 其他投影更新不能覆盖已缓存的大纲；新设备获得最近状态。
+      controlFrames.push({ type: 'projection', sessionId: 's1', key: 'todos', value: [], seq: 94 })
+      assert.equal(await waitFor(() => controls.some(f => f.kind === 'tasks-updated' && f.asOfSeq === 94), 2000), true)
+      const reconnected = new WebSocket(`ws://127.0.0.1:${webServer.port}/ws/mobile`, { headers: { 'X-DSH-Channel': 'control' } })
+      const recovered = []
+      reconnected.on('message', data => recovered.push(JSON.parse(data.toString())))
+      try {
+        assert.equal(await waitFor(() => recovered.some(f => f.kind === 'projection-baseline'), 2000), true)
+        assert.deepEqual(recovered.find(f => f.kind === 'projection-baseline').projections.s1.values.turnOutline, updatedOutline)
+      } finally { reconnected.terminate() }
+      controlFrames.push({ type: 'projection', sessionId: 's1', key: 'turnOutline', value: [], seq: 95 })
+      assert.equal(await waitFor(() => controls.some(f => f.kind === 'turn-outline-updated' && f.asOfSeq === 95), 2000), true)
+      assert.deepEqual(controls.find(f => f.kind === 'turn-outline-updated' && f.asOfSeq === 95).turnOutline, [])
+      controlFrames.push({ type: 'projection', sessionId: 's1', key: 'turnOutline', value: null, seq: 96 })
+      assert.equal(await waitFor(() => controls.some(f => f.kind === 'turn-outline-updated' && f.asOfSeq === 96), 2000), true)
+      assert.equal(controls.find(f => f.kind === 'turn-outline-updated' && f.asOfSeq === 96).turnOutline, null)
+      assert.equal(conversations.some(f => f.kind === 'turn-outline-updated'), false)
+      ws.send(JSON.stringify({ type: 'unsubscribe' }))
+      assert.equal(await waitFor(() => got.some(f => f.kind === 'subscribed' && f.sessionId === null), 2000), true)
       assert.equal(controls.find(f => f.kind === 'hello').dshVersion, '0.2.1-rc.2')
       control.send(JSON.stringify({ type: 'plugin-catalog', requestId: 'unauthenticated-catalog' }))
       assert.equal(await waitFor(() => controls.some(f => f.requestId === 'unauthenticated-catalog'), 2000), true)
@@ -888,11 +979,24 @@ function waitFor(pred, timeout) { return new Promise((res) => { const t0 = Date.
   controlFrames.push({ type: 'projection', sessionId: 's1', key: 'inbox', value: { 'next-turn': [], 'next-step': [] }, seq: 96 })
   assert.equal(await waitFor(() => got.some(frame => frame.kind === 'session-queue' && frame.sessionId === 's1' && frame.items.length === 0), 2000), true)
   controlFrames.push({ type: 'baseline', value: { projections: {
+    s1: { asOfSeq: 97, values: { turnOutline: initialTurnOutline } },
+    'outline-detached': { asOfSeq: 8, values: { turnOutline: initialTurnOutline } },
+  } } })
+  assert.equal(await waitFor(() => got.some(frame => frame.kind === 'projection-baseline'
+    && frame.projections['outline-detached']?.values.turnOutline?.length === 1), 2000), true)
+  controlFrames.push({ type: 'baseline', value: { projections: {
     s1: { asOfSeq: 94, values: { todos: [], goal: null } },
   } } })
   assert.equal(await waitFor(() => got.some(frame => frame.kind === 'projection-baseline' && frame.projections.s1?.values.goal === null), 2000), true)
   assert.equal(await waitFor(() => got.some(frame => frame.kind === 'session-queues' && !('s1' in frame.queues)), 2000), true)
   assert.equal(await waitFor(() => got.some(frame => frame.kind === 'goal-updated' && frame.goal === null && frame.asOfSeq === 94), 2000), true)
+  const resetBaseline = got.findLast(frame => frame.kind === 'projection-baseline')
+  assert.equal(resetBaseline.projections.s1.values.turnOutline, null, '缺少投影时显式清空旧大纲')
+  assert.equal('outline-detached' in resetBaseline.projections, false)
+  assert.equal(await waitFor(() => got.some(frame => frame.kind === 'turn-outline-updated'
+    && frame.sessionId === 's1' && frame.asOfSeq === 94 && frame.turnOutline === null), 2000), true)
+  assert.equal(await waitFor(() => got.some(frame => frame.kind === 'turn-outline-updated'
+    && frame.sessionId === 'outline-detached' && frame.asOfSeq === 8 && frame.turnOutline === null), 2000), true)
   interactionResults.push(['control reconnect restores projection baseline', true])
   workspaceFrames.push({ type: 'archived', archivedSessionIds: ['s1'] })
   const archivesUpdated = await waitFor(() => got.some((m) => m.kind === 'session-archives' && m.archivedSessionIds.includes('s1')), 2000)
@@ -1045,7 +1149,7 @@ function waitFor(pred, timeout) { return new Promise((res) => { const t0 = Date.
   const scheduleRecord = { id: 'reminder-1', kind: 'every', title: '检查构建', prompt: '检查构建状态', everySeconds: 300, scheduledAt: '2099-01-01T00:00:00.000Z' }
   const cases = [
     ['workspaces', { type: 'workspaces' }, (m) => m.kind === 'workspaces'],
-    ['sessions Unicode preview', { type: 'sessions' }, (m) => m.kind === 'sessions' && m.items[0].projections.values.turnOutline[0].response === '鼓掌 �…' && m.items[0].projections.values.turnOutline[0].prompt === '👏'],
+    ['sessions compact Unicode title', { type: 'sessions' }, (m) => m.kind === 'sessions' && m.items[0].projections.asOfSeq === 42 && m.items[0].projections.values.title === '鼓掌 👏 �…' && Object.keys(m.items[0].projections.values).length === 1],
     ['history+projections', { type: 'history', sessionId: 's1' }, (m) => m.kind === 'history' && m.sessionId === 's1' && m.projections && m.projections.values.tokenUsage && m.bytes > 0],
     ['history image reference', { type: 'history', sessionId: 's1', view: 'conversation' }, (m) => m.kind === 'history' && m.events[0].data.content[0].attachment.attachmentId === 'att-image-1'],
     ['attachment bytes', { type: 'attachment', sessionId: 's1', attachmentId: 'att-image-1' }, (m) => m.kind === 'attachment' && m.sessionId === 's1' && m.attachment.mediaType === 'image/png' && m.data === 'iVBORw0KGgo='],

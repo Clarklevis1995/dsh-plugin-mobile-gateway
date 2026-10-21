@@ -20,6 +20,7 @@ assert.throws(() => readHistoryRecords([{ type: 'chunks', event: packed.event }]
 
 const peer = createTestPeer()
 const calls = []
+const turnOutline = [{ turn: 1, seq: 1, prompt: '调整输入框阴影', response: '已减轻阴影。' }]
 const gateway = {
   async invoke(call) {
     assert.equal(call.peer, peer)
@@ -67,7 +68,8 @@ const gateway = {
           cursor: 9,
           records: [packed],
           hasMore: true,
-          projections: { asOfSeq: 9, values: { modelSelection: { lastUsed: null, next: { provider: 'deepseek', model: 'chat' } } } },
+          projections: { asOfSeq: 9, values: { turnOutline,
+            modelSelection: { lastUsed: null, next: { provider: 'deepseek', model: 'chat' } } } },
         }
       })()
     }
@@ -106,9 +108,11 @@ assert.equal(history.events[0].event.seq, 5)
 assert.equal(history.historyFormatVersion, 4)
 assert.equal(history.cursor, 9)
 assert.equal(history.projections.asOfSeq, 9)
+assert.deepEqual(history.projections.values.turnOutline, turnOutline)
 
 const older = await host.sessions.history({ sessionId: 's1', beforeSeq: 5, maxMessages: 20 })
 assert.equal(older.events[0].event.type, 'user/message')
+assert.deepEqual(older.projections.values.turnOutline, turnOutline)
 assert.equal(calls.filter(call => call.namespace === 'session' && call.method === 'follow').at(-1).args.request.maxMessages, 1)
 const pageCall = calls.find((call) => call.namespace === 'session' && call.method === 'page')
 assert.deepEqual(pageCall.args, {
