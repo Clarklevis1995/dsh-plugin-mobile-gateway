@@ -1,6 +1,6 @@
-# DSH 0.1.5-rc.2 移动端接入
+# DSH 0.2.1-rc.2 移动端接入
 
-本次源码以 DSH 0.1.5-rc.2 为唯一 Host 基线，不提供旧 Host 分支。配对、设备 token、双连接和 `dsh-mobile-v1` 保持原样；以下是新的实时订阅和历史坐标约定。App 需要同步实现本说明，不能把独立流帧交给旧的 `SessionEvent.seq` reducer。
+本次源码以 DSH 0.2.1-rc.2 为唯一 Host 基线，不提供旧 Host 分支。配对、设备 token、双连接和 `dsh-mobile-v1` 保持原样；以下是新的实时订阅和历史坐标约定。App 需要同步实现本说明，不能把独立流帧交给旧的 `SessionEvent.seq` reducer。
 
 ## 1. 能力与历史缓存
 
@@ -10,13 +10,13 @@
 {
   "kind": "hello",
   "protocol": 3,
-  "dshVersion": "0.1.5-rc.2",
-  "historyFormatVersion": 3,
+  "dshVersion": "0.2.1-rc.2",
+  "historyFormatVersion": 4,
   "capabilities": ["assistant-stream-v1", "history-format-version", "projection-baseline"]
 }
 ```
 
-示例只列出新增字段和能力；原有能力仍在。`dshVersion` 是本适配器的目标版本声明，非运行时 CLI 版本探测。握手协议值 3 与 Session 格式值 3 是独立概念。
+示例只列出新增字段和能力；原有能力仍在。`dshVersion` 是本适配器的目标版本声明，非运行时 CLI 版本探测。握手协议值 3 与 Session 格式值 4 是独立概念。
 
 缓存键至少包含 `(gatewayId, sessionId, historyFormatVersion)`。缓存没有格式版本或与服务端不同，必须丢弃该 Session 的旧历史、分页游标、fork 锚点及临时输出，重新安装基线。DSH 自己迁移磁盘日志，客户端不得迁移旧 seq。
 
@@ -42,7 +42,7 @@
   "sessionId": "s1",
   "subscriptionId": "<UUID>",
   "streamId": "<本次上游 follow 的 UUID>",
-  "historyFormatVersion": 3,
+  "historyFormatVersion": 4,
   "cursor": 41,
   "replace": true,
   "view": "conversation",
@@ -124,16 +124,16 @@
 { "type": "history", "sessionId": "s1", "view": "conversation" }
 ```
 
-返回值新增 `historyFormatVersion: 3`、`cursor`。conversation 视图隐藏 `system/message`、`request/header`、`request/context`，移除 Assistant 事件中的 `data.stream`，保留真实 seq、最终 message、usage 和 interrupted。默认原始视图保留完整内嵌 stream，用于按需读取轨迹。全部为隐藏事件的页仍返回可前进的 nextBeforeSeq。
+返回值新增 `historyFormatVersion: 4`、`cursor`。conversation 视图隐藏 `system/message`、`request/header`、`request/context`，移除 Assistant 事件中的 `data.stream`，保留真实 seq、最终 message、usage 和 interrupted。默认原始视图保留完整内嵌 stream，用于按需读取轨迹。全部为隐藏事件的页仍返回可前进的 nextBeforeSeq。
 
 携带游标必须同时携带读取该游标时的格式版本：
 
 ```json
-{ "type": "history", "sessionId": "s1", "beforeSeq": 20, "historyFormatVersion": 3 }
-{ "type": "fork", "sessionId": "s1", "atSeq": 42, "historyFormatVersion": 3 }
+{ "type": "history", "sessionId": "s1", "beforeSeq": 20, "historyFormatVersion": 4 }
+{ "type": "fork", "sessionId": "s1", "atSeq": 42, "historyFormatVersion": 4 }
 ```
 
-缺失版本、旧版本或版本不匹配，返回 `code: "history-format-mismatch"`、`resetRequired: true` 和当前 historyFormatVersion，且不会调用上游分页/fork。客户端必须重建缓存后再取新坐标，不能给旧坐标补一个 3 后重试。游标必须是非负安全整数。省略 atSeq 的 fork 仍表示从最近完成轮次分叉。
+缺失版本、旧版本或版本不匹配，返回 `code: "history-format-mismatch"`、`resetRequired: true` 和当前 historyFormatVersion，且不会调用上游分页/fork。客户端必须重建缓存后再取新坐标，不能给旧坐标补一个 4 后重试。游标必须是非负安全整数。省略 atSeq 的 fork 仍表示从最近完成轮次分叉。
 
 收到 session-snapshot 后，不要用晚到的普通 history 响应覆盖正在进行的订阅基线；更早历史页只合并到历史部分。这样可以避免独立查询与实时流交错造成回滚。
 

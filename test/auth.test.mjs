@@ -274,6 +274,8 @@ function expectRejected(url, options = {}) {
     'images',
     'session-create',
     'session-agent-preset',
+    'agent-team-v1',
+    'subagent-conversations-v1',
     'commands',
     'tasks',
     'goals',

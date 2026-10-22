@@ -1395,3 +1395,41 @@ history. Older gateways without the capability continue using one connection.
 取消回执只表示已发出取消信号；原转写随后返回 `speech/cancelled`，资源清理完成前仍占并发名额。断线、网关停止会中止该连接的活动转写和状态订阅。其他连接不能取消这个转写，即使属于同一设备。客户端上滑取消、切换页面或替换草稿后必须忽略旧请求的迟到结果。
 
 错误统一为 `kind:error`，包含 `requestType`, `requestId`, `code`, `message`。网关错误包括 `authentication-required`, `wrong-channel`, `bad-request`, `speech/unavailable`, `speech/busy`, `speech/request-in-progress`, `speech/request-not-found`, `speech/invalid-audio`, `speech/cancelled`, `speech/timeout`, `speech/invalid-response`, `speech/stream-ended`；官方插件的 `speech/transcription-failed` 等错误代码保留。
+
+## 智能体团队与子会话（agent-team-v1 / subagent-conversations-v1）
+
+当前源码新增两个协议 3 可选能力，Host 适配基线为 DSH 0.2.1-rc.2、Session format 4。完整 APP 实施规范见 [智能体团队 APP 详细接入指南](docs/agent-team-app-integration.md)，包含成员与任务完整字段、目录树、视图切换、消息和停止、投影缓存、恢复流程及验收清单。
+
+| 连接 | 请求/推送 | 说明 |
+|---|---|---|
+| control | `agent-team` | 请求 `sessionId` 为 Lead ID，`requestId?` 回显；响应 `agentTeam` 完整值及 `projectionState`、精确值的 `asOfSeq` |
+| control | `subagents` | 请求 `sessionId` 为父节点 ID，`requestId?` 回显；响应 `subagentCatalog` 直接子节点数组及相同投影状态字段 |
+| control | `agent-team-updated` | `{sessionId,asOfSeq,agentTeam}`，团队完整值替换，null 表示失效 |
+| control | `subagents-updated` | `{sessionId,asOfSeq,subagentCatalog}`，父节点直接子目录完整替换，null 表示失效 |
+| control | `subagent-identity-updated` | `{sessionId,asOfSeq,subagent}`，该子会话身份完整值或 null |
+| control | `subagent-timing-updated` | `{sessionId,asOfSeq,subagentTiming}`，该子会话耗时完整值或 null |
+| control | `session-status` | `{sessionId,running}`，全局进程内运行状态；初始/重连用 sessions 刷新 |
+
+两个查询都返回 `projectionState: ready | unavailable | migration-required`。没有投影是 null，空目录是 `[]`，空任务板是团队对象中的 `tasks:[]`；迁移提示没有 `asOfSeq`，不能当作精确基线。未找到会话返回 `session/not-found`。查询不激活 Agent、不调用模型。capability 仅表示网关理解协议，不保证 Host 已启用实验性团队插件。
+
+新增投影键 `agentTeam/subagentCatalog/subagent/subagentTiming` 同时出现在 `projection-baseline`。上述更新与运行状态不受当前聊天 subscribe 过滤，仅发往 control/legacy。Host control 重建会发送替换基线及失效通知；基线未包含冷会话不表示会话删除。各投影按 `(gatewayId, sessionId, projectionKey)` 管理水位，不能跨会话或跨键比较 seq。初始运行状态从 sessions 查询取得，实时状态不具备持久 seq。
+
+子会话沿用现有 `sessionId` 为当前视图 ID，增加 `parentSessionId`（直接父会话）和 `subagentMode`（`continuable | one-shot | unknown`）；这两个字段必须一起提供。普通会话不带它们，external 节点没有本地子会话地址。
+
+```json
+{"type":"subscribe","sessionId":"child","parentSessionId":"lead","subagentMode":"continuable","assistantStream":true}
+{"type":"history","sessionId":"child","parentSessionId":"lead","subagentMode":"continuable","requestId":"h1","beforeSeq":20,"historyFormatVersion":4}
+{"type":"message","sessionId":"child","parentSessionId":"lead","subagentMode":"continuable","requestId":"m1","mode":"queue","text":"继续处理当前任务"}
+{"type":"session-cancel","sessionId":"child","parentSessionId":"lead","subagentMode":"continuable","requestId":"stop1"}
+{"type":"tasks","sessionId":"child","parentSessionId":"lead","subagentMode":"continuable","requestId":"todos1"}
+```
+
+- conversation：`history/subscribe/message`；control：`session-cancel/tasks/goal`。`goal` 同样支持子地址。其他操作不能仅凭此能力推定支持子地址。
+- `subscribed`、follower 的 snapshot/event/assistant-stream/reset 回显父子地址；切换使用新 `subscriptionId/streamId`。旧 legacy 持久事件可能只有 sessionId。
+- history、tasks、goal、session-cancel 的正常响应及查询失败回显原请求 requestId（如果提供）。`sent` 对子消息额外返回 `messageId`、父子地址以及原 requestId。
+- 子消息内部使用官方专用 continuation 接口；`message.mode` 仍是 queue/steer，不表示生命周期。只有 continuable 能发送与停止。
+- 共享任务来自 Lead 的 `agentTeam.tasks`，负责人字段是 `ownerName`；成员 `todos` 仍是独立内部待办。
+- 普通子目录包含 continuable/one-shot/external/unknown；按父节点逐级读取，不自动递归。
+- 子会话父子关系由 Host 校验，非法关系返回 `subagent/unauthorized` 等错误；无法继续的模式返回 `subagent/not-resumable`。
+- 发送回执只表示 inbox 接受，不保证执行完成，也不提供自动重试去重保证。断线无回执应核对历史/队列，不能盲目重发。
+- 本次不提供直接创建成员或变更共享任务的移动 RPC；由用户在 Lead 对话中提出要求，Host 团队工具执行，APP 等待权威投影更新。
