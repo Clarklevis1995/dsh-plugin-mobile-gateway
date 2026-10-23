@@ -1,7 +1,7 @@
 {
   "name": "dsh-plugin-mobile-gateway",
-  "version": "0.11.0",
-  "description": "DeepSeek Harness 移动网关，支持安全设备配对、实时会话同步、插件管理、官方语音输入、文件卡片与安全预览、局域网及 Cloudflare Tunnel。0.11.0 新增智能体团队与子会话协议，支持团队成员、共享任务看板、多层子智能体目录和运行状态实时同步，以及子智能体独立历史、视图切换、继续对话、图片输入与停止执行；提供完整 APP 接入文档，客户端需按能力发现接入。",
+  "version": "0.11.1",
+  "description": "DeepSeek Harness 移动网关，支持安全设备配对、实时会话同步、智能体团队与子会话、插件管理、官方语音输入，以及局域网和 Cloudflare Tunnel。0.11.1 新增普通文件分块上传，支持 SHA-256 校验、进度确认、取消与断线清理，复用 DSH 官方附件存储和会话专属凭证，支持文件随消息发送及实时和历史文件引用；提供详细 App 对接指南。",
   "main": "lib/index.mjs",
   "files": [
     "bin",
@@ -26,7 +26,7 @@
   },
   "bin": "bin/setup-ip.mjs",
   "scripts": {
-    "test": "node test/wire-json.test.mjs && node test/setup-ip.test.mjs && node test/host-adapter.test.mjs && node test/speech-input.test.mjs && node test/plugin-management.test.mjs && node test/session-preset.test.mjs && node test/session-follower.test.mjs && node --test test/agent-team.test.mjs && node test/session-event-details.test.mjs && node test/gateway.test.mjs && node --test test/approval-replay.test.mjs && node test/auth.test.mjs && node test/lan.test.mjs && node test/cloudflared-binary.test.mjs && node test/cloudflare-tunnel.test.mjs && node --test test/public-endpoint-check.test.mjs && node test/gateway-tools.test.mjs && node test/multi-gateway.test.mjs"
+    "test": "node test/wire-json.test.mjs && node test/setup-ip.test.mjs && node test/host-adapter.test.mjs && node --test test/file-upload.test.mjs && node test/speech-input.test.mjs && node test/plugin-management.test.mjs && node test/session-preset.test.mjs && node test/session-follower.test.mjs && node --test test/agent-team.test.mjs && node test/session-event-details.test.mjs && node test/gateway.test.mjs && node --test test/approval-replay.test.mjs && node test/auth.test.mjs && node test/lan.test.mjs && node test/cloudflared-binary.test.mjs && node test/cloudflare-tunnel.test.mjs && node --test test/public-endpoint-check.test.mjs && node test/gateway-tools.test.mjs && node test/multi-gateway.test.mjs"
   },
   "exports": {
     ".": "./lib/index.mjs",

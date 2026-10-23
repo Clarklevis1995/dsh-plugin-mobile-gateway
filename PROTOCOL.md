@@ -866,6 +866,38 @@ DSH `present` 工具成功后持久化 `deliverables/presented`，移动端根�
 - 默认每块为 512 KiB、同时最多 4 个下载、单个文件最多 512 MiB。部署方可用 `fileDownloadChunkBytes`、`fileDownloadMaxTransfers`、`fileDownloadMaxBytes`、`fileDownloadIdleMs` 调整；`fileDownloadsEnabled: false` 会关闭该能力，且 `hello.capabilities` 不再包含 `file-downloads`。
 - 绝对路径、空路径（`file-download-open`）、`..` 路径段、NUL 字符、工作目录外的符号链接、目录和其他非普通文件都会被拒绝。`file-list` 不返回符号链接，避免客户端误认为其可下载。
 
+### 普通文件上传
+
+已配对连接在启用 `fileUploadsEnabled` 时公布 `file-upload-v1`。上传请求走 control 连接（兼容 legacy），消息走 conversation 连接（兼容 legacy）。普通文件按原始字节进入官方附件存储，取得会话专属 `receiptId`，不接受客户端指定的主机路径。自定义 Host 未组合官方文件上传服务时返回 `file-upload-unavailable`。
+
+| type | 必填参数 | 成功 kind |
+|---|---|---|
+| `file-upload-open` | `requestId`, `sessionId`, `name`, `size`, `sha256` | `file-upload-opened` |
+| `file-upload-chunk` | `requestId`, `uploadId`, `offset`, `data` | `file-upload-chunk-accepted` |
+| `file-upload-finish` | `requestId`, `uploadId` | `file-upload-completed` |
+| `file-upload-cancel` | `requestId`, `uploadId` | `file-upload-cancelled` |
+
+`requestId` 为 1 至 128 字符的非空字符串，所有上传响应和错误均回显。`sessionId` 必须是已有普通会话；新草稿先使用 `session-create`，子智能体暂不支持文件附件。`name` 只允许不带目录和控制字符的 1 至 255 字符文件名。`size` 为非负安全整数，`sha256` 是完整原始字节的 64 位十六进制摘要，允许空文件。
+
+`file-upload-opened` 返回 `uploadId/sessionId/name/size/chunkBytes/maxBytes/idleTimeoutMs`。chunk 使用标准 Base64，`offset` 按解码字节计数，必须等于当前已确认位置；每次等待 `file-upload-chunk-accepted.nextOffset` 后再发下一块，不支持分块流水线或跨连接续传。finish 校验长度和 SHA-256 后通过官方流式接口提交：
+
+```json
+{ "kind": "file-upload-completed", "requestId": "finish-1", "uploadId": "upload-uuid", "sessionId": "s1",
+  "receiptId": "host-receipt-uuid", "sha256": "<64 位十六进制摘要>",
+  "file": { "attachmentId": "opaque-file-id", "name": "报告.pdf", "bytes": 1234 } }
+
+{ "type": "message", "requestId": "submission-uuid", "sessionId": "s1", "text": "分析这个报告",
+  "files": [{ "receiptId": "host-receipt-uuid" }], "mode": "queue" }
+```
+
+含文件消息必须有 `requestId`，会原样传给 Host 用于相同提交的重试去重。`files` 最多 20 项，不允许重复凭证；可以纯文件发送或与已有图片、文字混合。Host 校验凭证所属的准确 Session，并将其转换为原生 file 内容块；上传完成不会自动发送消息。
+
+实时 `user/message` 新增 `event.files: [{attachmentId,name,bytes}]`；历史 `data.content[]` 保留 `{type:"file",attachment:{attachmentId,name,bytes}}`。附件 ID 不等于工作区路径，现有图片 `attachment` 和工作区 `file-download-*` 不能用于按此 ID 下载文件。
+
+默认单文件 512 MiB、每块 256 KiB、全网关最多 4 个活动上传、空闲 2 分钟、Host 提交超时 180 秒。可配置 `fileUploadMaxBytes/fileUploadChunkBytes/fileUploadMaxTransfers/fileUploadIdleMs/fileUploadCommitTimeoutMs`，实际分块上限还受 `maxPayloadBytes` 限制。上传开关独立于下载开关。
+
+uploadId 仅归属创建它的 socket；取消、断线、空闲超时和网关停止会清理网关暂存并中止活动提交。原连接可在短期完成缓存内重试 finish 取得同一结果，缓存最多 128 条、默认保留 2 分钟；不提供断点续传或 Host 附件回滚删除。更完整的官方 WebUI 源码对应关系、JSON 示例、错误表、App 状态机和验收步骤见 [移动端普通文件上传对接指南](docs/file-upload-app-integration.md)。
+
 ### `session-stats` 详细（输入框统计条）
 ```json
 { "type": "session-stats", "sessionId": "session-abc" }
@@ -1155,7 +1187,7 @@ Control/旧单连接接收全局模式状态增量，不受所订阅会话过滤
   "event": { "type": "assistant/message", "turn": 1, "step": 0, "text": "已完成", "reasoning": "", "toolCalls": [] } }
 ```
 `event.type` 覆盖（精炼字段）：
-- `user/message` → `{text, source, images?: ImageAttachmentRef[]}`
+- `user/message` → `{text, source, images?: ImageAttachmentRef[], files?: [{attachmentId,name,bytes}]}`
 - 实时 token 使用独立 `assistant-stream`，不是带持久 seq 的 `assistant/chunk`；详见 [rc.2 接入说明](docs/dsh-rc2-mobile-integration.md)。
 - `assistant/attempt` → `{turn, step, stream[], finish?: {kind, failure?}}`
 - `assistant/message` → `{turn, step, text, reasoning, toolCalls[], interrupted?, usage?, finish?: {kind, failure?}}`

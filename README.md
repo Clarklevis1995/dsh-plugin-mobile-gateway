@@ -10,7 +10,9 @@ DeepSeek Harness 的设备鉴权移动网关，支持会话与实时事件、排
 >
 > 实时流已改为独立 `assistant-stream` 帧，移动端需要按 [rc.2 接入说明](docs/dsh-rc2-mobile-integration.md) 更新订阅、缓存与分页处理。当前修改尚未发布。
 >
-> v0.11.0（当前源码，尚未发布）：新增智能体团队与子会话协议，支持团队成员、共享任务看板、多层子智能体目录和运行状态实时同步，以及子智能体独立历史、视图切换、继续对话、图片输入与停止执行。APP 需按能力发现接入，详见 [智能体团队 APP 详细接入指南](docs/agent-team-app-integration.md)。
+> v0.11.1（当前源码，尚未发布）：新增普通文件分块上传，支持 SHA-256 校验、进度确认、取消与断线清理，复用 DSH 官方附件存储和会话专属凭证，支持文件随消息发送及实时和历史文件引用。App 需按 `file-upload-v1` 能力接入，详见 [移动端普通文件上传对接指南](docs/file-upload-app-integration.md)。
+>
+> v0.11.0：新增智能体团队与子会话协议，支持团队成员、共享任务看板、多层子智能体目录和运行状态实时同步，以及子智能体独立历史、视图切换、继续对话、图片输入与停止执行。APP 需按能力发现接入，详见 [智能体团队 APP 详细接入指南](docs/agent-team-app-integration.md)。
 >
 > v0.10.4：精简会话列表投影，仅保留标题与投影切点，修复大量会话通过公网隧道传输时超时的问题；保留会话元信息和历史完整投影，现有移动客户端无需配套修改。
 >
@@ -53,6 +55,8 @@ DSH_INSTALL_ROOT=/absolute/path/to/@deepseek-ai/dsh node test/host-official.test
 当前源码新增会话模式选择：App 创建空白 Session 后，可查询并修改该 Session 的 Agent preset；首次对话后锁定。通过 `session-agent-preset` 能力发现接入，详见 [App 接入说明](docs/session-agent-preset-app-integration.md)。App 界面需按此说明接入，本次源码尚未发布。
 
 当前源码新增 `turn-outline-v1`：透传 WebUI 使用的完整轮次大纲及实时更新，支持 App 在未加载全部正文时展示会话刻度、问答预览并按需分页跳转。控制连接重建和新设备连接会恢复大纲基线；Host 未提供大纲时可降级为已加载轮次导航。详见 [App 会话轮次导航接入指南](docs/turn-outline-app-integration.md)。App 界面需单独接入，本次源码尚未发布。
+
+当前源码新增 `file-upload-v1`：已配对移动端可通过控制连接分块上传 PDF、Office、压缩包、音频等普通文件，校验 SHA-256 后存入 DSH 官方附件存储，再以会话专属凭证随消息发送。支持进度确认、取消、断线清理及实时/历史文件引用；复用官方 WebUI 的附件准入，不写入客户端指定的主机路径。帧示例、App 状态机、限制及验收见 [移动端普通文件上传对接指南](docs/file-upload-app-integration.md)。App 页面需单独接入，本次源码尚未发布。
 
 当前源码新增 `agent-team-v1`、`subagent-conversations-v1`：支持团队成员与共享任务板查询、各层子智能体目录、团队投影和成员运行状态实时同步，以及子会话独立历史、订阅、继续对话与停止执行。APP 的目标地址、完整 JSON 示例、看板规则、切换与重连状态机、错误处理和验收清单见 [智能体团队 APP 详细接入指南](docs/agent-team-app-integration.md)。本次只提供网关能力，APP 页面需单独接入，源码尚未发布。
 

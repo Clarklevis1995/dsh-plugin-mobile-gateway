@@ -9,6 +9,7 @@ const os = require('node:os')
 const path = require('node:path')
 const { once } = require('node:events')
 const WebSocket = require('ws')
+const crypto = require('node:crypto')
 const plugin = (await import('../lib/index.mjs')).default
 const { createRegistry } = require('../lib/devices.js')
 
@@ -86,6 +87,9 @@ function expectRejected(url, options = {}) {
   let managementRoute
   let upgradeRoute
   let disposePlugin
+  const uploadedFiles = new Map()
+  const prompts = []
+  const events = {}
   const server = http.createServer((req, res) => {
     if (managementRoute && (req.url === managementRoute.path || req.url.startsWith(`${managementRoute.path}/`))) {
       managementRoute.handler(req, res)
@@ -107,6 +111,20 @@ function expectRejected(url, options = {}) {
     connection: createTestConnection(),
     typertGateway: {
       async invoke(request) {
+        if (request.namespace === 'session' && request.method === 'list') return { items: [{ sessionId: 's1' }, { sessionId: 's2' }] }
+        if (request.namespace === 'session' && request.method === 'prompt') {
+          const prompt = request.args.request
+          prompts.push(prompt)
+          const content = prompt.content.map(part => {
+            if (part.type !== 'file') return part
+            const uploaded = uploadedFiles.get(part.receiptId)
+            if (uploaded?.sessionId !== prompt.sessionId) throw Object.assign(new Error('File was not uploaded for this session'), { code: 'session/attachment-invalid' })
+            return { type: 'file', attachment: uploaded.file }
+          })
+          events['session/event']({ id: prompt.sessionId }, { type: 'user/message', seq: 1, time: 1,
+            data: { content, source: { kind: 'user' } } })
+          return { accepted: true }
+        }
         if (request.namespace === 'speech' && request.method === 'catalog') return {
           providers: [{ id: 'sensevoice-local', preparation: { phase: 'ready' } }],
           selection: { providerId: 'sensevoice-local', language: 'auto' },
@@ -133,8 +151,25 @@ function expectRejected(url, options = {}) {
       },
     },
     agentDefaultModel: {},
-    on() { return () => {} },
+    on(name, listener) { events[name] = listener; return () => {} },
     effect(factory) { disposePlugin = factory() },
+  }
+  ctx.connection.createSharedFetchHandler = channel => {
+    assert.equal(channel, '/api')
+    return {
+      requestBodyMode: () => 'streaming',
+      async fetch(request, peer) {
+        assert.equal(peer, ctx.connection.peers[0])
+        const url = new URL(request.url)
+        assert.equal(url.pathname, '/api/session/uploadFileBinary')
+        const bytes = Buffer.from(await request.arrayBuffer())
+        const receiptId = crypto.randomUUID()
+        const file = { attachmentId: `sha256:${crypto.createHash('sha256').update(bytes).digest('hex')}`,
+          name: url.searchParams.get('name'), bytes: bytes.length }
+        uploadedFiles.set(receiptId, { sessionId: url.searchParams.get('sessionId'), file, bytes })
+        return Response.json({ ok: true, value: { receiptId, file } })
+      },
+    }
   }
   plugin.apply(ctx, {
     requireAuth: true,
@@ -203,6 +238,12 @@ function expectRejected(url, options = {}) {
   const unauthenticatedSpeech = waitForMessage(debugSocket, 'error')
   debugSocket.send(JSON.stringify({ type: 'speech-catalog', requestId: 'unauthenticated-speech' }))
   assert.equal((await unauthenticatedSpeech).code, 'authentication-required')
+  const unauthenticatedUpload = waitForMessage(debugSocket, 'error')
+  debugSocket.send(JSON.stringify({ type: 'file-upload-open', requestId: 'anonymous-upload' }))
+  assert.equal((await unauthenticatedUpload).code, 'authentication-required')
+  const unauthenticatedFileMessage = waitForMessage(debugSocket, 'error')
+  debugSocket.send(JSON.stringify({ type: 'message', sessionId: 's1', requestId: 'anonymous-file', files: [{ receiptId: 'fake' }] }))
+  assert.equal((await unauthenticatedFileMessage).code, 'authentication-required')
 
   const debugClosePromise = once(debugSocket, 'close')
   const enableAuthResponse = await fetch(`${base}/mgw/auth`, {
@@ -282,6 +323,7 @@ function expectRejected(url, options = {}) {
     'schedule-management',
     'plugin-management-v1',
     'speech-input-v1',
+    'file-upload-v1',
     'session-cancel',
     'queue-control',
     'session-archive',
@@ -318,6 +360,37 @@ function expectRejected(url, options = {}) {
   const wrongChannel = waitForMessage(conversationSocket, 'error')
   conversationSocket.send(JSON.stringify({ type: 'speech-catalog', requestId: 'wrong-speech-channel' }))
   assert.equal((await wrongChannel).code, 'wrong-channel')
+  const wrongUploadChannel = waitForMessage(conversationSocket, 'error')
+  conversationSocket.send(JSON.stringify({ type: 'file-upload-open', requestId: 'wrong-upload-channel' }))
+  assert.equal((await wrongUploadChannel).requestId, 'wrong-upload-channel')
+  const uploadBytes = Buffer.from('移动端 PDF 测试\0\xff')
+  const uploadHash = crypto.createHash('sha256').update(uploadBytes).digest('hex')
+  const openedPromise = waitForMessage(tokenSocket, 'file-upload-opened')
+  tokenSocket.send(JSON.stringify({ type: 'file-upload-open', requestId: 'upload-open', sessionId: 's1',
+    name: '移动文件.pdf', size: uploadBytes.length, sha256: uploadHash }))
+  const opened = await openedPromise
+  const foreignUpload = waitForMessage(pairedSocket, 'error')
+  pairedSocket.send(JSON.stringify({ type: 'file-upload-finish', requestId: 'foreign-finish', uploadId: opened.uploadId }))
+  assert.equal((await foreignUpload).code, 'file-upload-not-found')
+  const acceptedChunk = waitForMessage(tokenSocket, 'file-upload-chunk-accepted')
+  tokenSocket.send(JSON.stringify({ type: 'file-upload-chunk', requestId: 'upload-chunk', uploadId: opened.uploadId,
+    offset: 0, data: uploadBytes.toString('base64') }))
+  assert.equal((await acceptedChunk).nextOffset, uploadBytes.length)
+  const completedPromise = waitForMessage(tokenSocket, 'file-upload-completed')
+  tokenSocket.send(JSON.stringify({ type: 'file-upload-finish', requestId: 'upload-finish', uploadId: opened.uploadId }))
+  const completed = await completedPromise
+  assert.equal(completed.sha256, uploadHash)
+  assert.deepEqual(uploadedFiles.get(completed.receiptId).bytes, uploadBytes)
+  const fileMessage = waitForMessage(conversationSocket, 'sent')
+  const fileEvent = waitForMessage(pairedSocket, 'event')
+  conversationSocket.send(JSON.stringify({ type: 'message', requestId: 'send-file', sessionId: 's1',
+    text: '分析这个文件', files: [{ receiptId: completed.receiptId }] }))
+  assert.equal((await fileMessage).requestId, 'send-file')
+  assert.equal(prompts.at(-1).requestId, 'send-file')
+  assert.deepEqual((await fileEvent).event.files, [completed.file])
+  const foreignReceipt = waitForMessage(conversationSocket, 'error')
+  conversationSocket.send(JSON.stringify({ type: 'message', requestId: 'foreign-receipt', sessionId: 's2', files: [{ receiptId: completed.receiptId }] }))
+  assert.equal((await foreignReceipt).code, 'session/attachment-invalid')
   const conversationClosed = once(conversationSocket, 'close')
   conversationSocket.close()
   await conversationClosed

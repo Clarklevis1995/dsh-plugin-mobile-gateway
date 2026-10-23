@@ -80,6 +80,46 @@ const gateway = {
 const host = createDshHostAdapter(gateway, peer)
 assert.throws(() => createDshHostAdapter(gateway), /requires a DSH Connection Peer/)
 
+// 官方流式路由走 Connection 注册表与固定 Peer，不发送真实 HTTP 请求。
+{
+  let available = true
+  let rejection
+  const uploadHost = createDshHostAdapter(gateway, peer, {
+    createSharedFetchHandler(channel) {
+      assert.equal(channel, '/api')
+      return {
+        requestBodyMode: ({ method, url }) => {
+          assert.equal(method, 'POST')
+          assert.equal(url.pathname, '/api/session/uploadFileBinary')
+          return available ? 'streaming' : 'buffered'
+        },
+        async fetch(request, receiver) {
+          assert.equal(receiver, peer)
+          const url = new URL(request.url)
+          assert.equal(url.searchParams.get('sessionId'), 's1')
+          assert.equal(url.searchParams.get('name'), '报告 #1.pdf')
+          assert.equal(request.headers.get('content-type'), 'application/octet-stream')
+          assert.deepEqual(Buffer.from(await request.arrayBuffer()), Buffer.from([0, 255, 13]))
+          return Response.json(rejection ? { ok: false, error: rejection }
+            : { ok: true, value: { receiptId: 'receipt-1', file: { attachmentId: 'opaque', name: '报告 #1.pdf', bytes: 3 } } })
+        },
+      }
+    },
+  })
+  const request = () => ({ sessionId: 's1', name: '报告 #1.pdf', data: (async function* () { yield Buffer.from([0, 255]); yield Buffer.from([13]) })() })
+  assert.equal(uploadHost.files.available(), true)
+  assert.equal((await uploadHost.files.upload(request())).receiptId, 'receipt-1')
+  rejection = { code: 'session/attachment-invalid', message: 'unsupported provider' }
+  await assert.rejects(() => uploadHost.files.upload(request()), { code: 'session/attachment-invalid' })
+  const cancelled = new AbortController()
+  cancelled.abort(Object.assign(new Error('cancelled'), { code: 'file-upload-cancelled' }))
+  await assert.rejects(() => uploadHost.files.upload(request(), cancelled.signal), { code: 'file-upload-cancelled' })
+  available = false
+  assert.equal(uploadHost.files.available(), false)
+  await assert.rejects(() => uploadHost.files.upload(request()), { code: 'file-upload-unavailable' })
+  assert.equal(host.files.available(), false)
+}
+
 // 官方实验性语音 Remote 使用各自的真实参数名，并传递取消信号。
 {
   const signal = new AbortController().signal
