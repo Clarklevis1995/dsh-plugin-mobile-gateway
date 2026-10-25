@@ -10,7 +10,8 @@ const os = require('node:os')
 const path = require('node:path')
 const { once } = require('node:events')
 const WebSocket = require('ws')
-const plugin = (await import('../lib/index.mjs')).default
+const gatewayModule = await import('../lib/index.mjs')
+const plugin = gatewayModule.default
 
 function expectRejected(url, options = {}) {
   return new Promise((resolve, reject) => {
@@ -294,3 +295,53 @@ async function waitForLanStatus(base) {
   console.error(error)
   process.exit(1)
 })
+
+// ---------------------------------------------------------------------------
+// 配对码里该广播哪些局域网地址
+// ---------------------------------------------------------------------------
+
+// 该广播的：真正的私网段
+{
+  const { isAdvertisableLanAddress } = gatewayModule
+  for (const address of ['192.168.3.136', '10.0.0.2', '172.16.5.4', '172.31.255.1']) {
+    assert.equal(isAdvertisableLanAddress(address), true, `${address} 应该广播`)
+  }
+  // 不该广播的：169.254.0.0/16 是没配成 DHCP 时自动拿到的链路本地地址，手机连不上
+  for (const address of ['169.254.1.185', '169.254.100.19', '169.254.0.1']) {
+    assert.equal(isAdvertisableLanAddress(address), false, `${address} 不该广播`)
+  }
+  // 公网地址本来就不该进局域网列表
+  for (const address of ['203.0.113.9', '8.8.8.8']) {
+    assert.equal(isAdvertisableLanAddress(address), false, `${address} 不该广播`)
+  }
+}
+
+// The advertised list with a known set of interfaces. Stubbed rather than read from
+// the host so the assertion is meaningful on CI machines that have no 169.254 address.
+// Same object as the plugin's import, and swapped back in the same synchronous block so
+// the async scenario above never observes the stub.
+{
+  const { privateLanAddresses } = gatewayModule
+  const real = os.networkInterfaces
+  os.networkInterfaces = () => ({
+    // ordinary LAN address
+    en0: [{ address: '192.168.3.136', family: 'IPv4', internal: false }],
+    // USB adapter that never got a lease
+    en5: [{ address: '169.254.1.185', family: 'IPv4', internal: false }],
+    // Thunderbolt bridge: 10/8 private and genuinely reachable, so it stays
+    bridge0: [{ address: '10.0.0.2', family: 'IPv4', internal: false }],
+    // Tailscale range: not advertised by this version at all
+    utun4: [{ address: '100.103.93.57', family: 'IPv4', internal: false }],
+    // loopback is internal, never advertised
+    lo0: [{ address: '127.0.0.1', family: 'IPv4', internal: true }],
+  })
+  try {
+    assert.deepEqual(
+      privateLanAddresses(),
+      ['192.168.3.136', '10.0.0.2'],
+      'link-local, Tailscale and loopback addresses must not be advertised',
+    )
+  } finally {
+    os.networkInterfaces = real
+  }
+}
