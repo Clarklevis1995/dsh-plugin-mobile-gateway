@@ -434,6 +434,54 @@ function expectRejected(url, options = {}) {
   assert.equal(await expectRejected(wsUrl, { headers: { Authorization: `Bearer ${pairedFrame.token}` } }), 401)
   assert.equal(await expectRejected(wsUrl, { headers: { Authorization: `Bearer ${rePairedFrame.token}` } }), 401)
 
+  // Browser-style clients cannot set X-DSH-Device-ID. They may carry the same
+  // installation-level id in a `dsh-device.` subprotocol instead; the pairing
+  // code and the issued token stay the only credentials.
+  const browserDeviceId = 'a1b2c3d4-5e6f-4a7b-8c9d-0e1f2a3b4c5d'
+  const browserPairResponse = await fetch(`${base}/mgw/pair`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: base },
+    body: JSON.stringify({ name: 'Browser WebUI', publicUrl: wsUrl }),
+  })
+  assert.equal(browserPairResponse.status, 201)
+  const browserPairBody = await browserPairResponse.json()
+  // A malformed subprotocol id counts as a missing device id; the single-use
+  // code must survive the rejection so the client can retry with a valid id.
+  assert.equal(await expectRejected(
+    wsUrl,
+    ['dsh-mobile-v1', `dsh-pair.${browserPairBody.payload.pairingCode}`, 'dsh-device.short'],
+  ), 400)
+  const browserDeviceName = Buffer.from('Browser WebUI', 'utf8').toString('base64url')
+  const browserSocket = new WebSocket(
+    wsUrl,
+    ['dsh-mobile-v1', `dsh-pair.${browserPairBody.payload.pairingCode}`,
+      `dsh-device.${browserDeviceId}`, `dsh-device-name.${browserDeviceName}`],
+  )
+  const browserPairedPromise = waitForMessage(browserSocket, 'paired')
+  const browserHelloPromise = waitForMessage(browserSocket, 'hello')
+  await once(browserSocket, 'open')
+  const browserPairedFrame = await browserPairedPromise
+  const browserHello = await browserHelloPromise
+  assert.equal(browserSocket.protocol, 'dsh-mobile-v1')
+  assert.equal(browserHello.authenticated, true)
+  assert.equal(browserPairedFrame.device.name, 'Browser WebUI')
+  assert.equal(typeof browserPairedFrame.token, 'string')
+  const storedDevices = JSON.parse(fs.readFileSync(path.join(temp, 'integration-devices.json'), 'utf8'))
+  assert.equal(storedDevices.devices.at(-1).clientDeviceId, browserDeviceId)
+  // Browser reconnect: token and device id both travel in subprotocols, no headers.
+  const browserTokenSocket = new WebSocket(
+    wsUrl,
+    ['dsh-mobile-v1', `dsh-auth.${browserPairedFrame.token}`, `dsh-device.${browserDeviceId}`],
+  )
+  const browserTokenHelloPromise = waitForMessage(browserTokenSocket, 'hello')
+  await once(browserTokenSocket, 'open')
+  assert.equal((await browserTokenHelloPromise).authenticated, true)
+  const browserDevices = await (await fetch(`${base}/mgw/devices`)).json()
+  assert.equal(browserDevices.devices.length, 1)
+  assert.equal(browserDevices.devices[0].name, 'Browser WebUI')
+  browserSocket.close()
+  browserTokenSocket.close()
+
   const disableGatewayResponse = await fetch(`${base}/mgw/gateway`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Origin: base },
