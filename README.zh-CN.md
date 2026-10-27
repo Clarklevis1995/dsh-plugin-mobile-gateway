@@ -1,0 +1,402 @@
+[English](README.md) · **简体中文** · [日本語](docs/readme/README.ja.md) · [한국어](docs/readme/README.ko.md) · [Español](docs/readme/README.es.md) · [Français](docs/readme/README.fr.md) · [Deutsch](docs/readme/README.de.md) · [Português (Brasil)](docs/readme/README.pt-BR.md)
+
+> 部分深入协议与接入文档目前仅提供中文。
+
+<p align="center">
+  <img src="docs/assets/whale-girl-ios-app-promo-16x9.png" alt="DeepSeek Harness Mobile 与移动网关" width="100%">
+</p>
+
+# dsh-plugin-mobile-gateway
+
+DeepSeek Harness 的第三方设备鉴权移动网关，支持会话与实时事件、排队消息同步及编辑/删除/Steer、Session 归档和重命名的双向同步、停止当前生成并稍后继续、任务列表和当前 Goal 同步及管理、服务端驱动的命令和技能菜单、Human-in-the-loop、图片及文件传输。安装后，Harness WebUI 左侧边栏会出现“移动设备”入口，可直接开启网关、生成配对二维码和管理可信设备。
+
+> 当前源码以 **DSH 0.2.1-rc.2** 为适配基线，需要 Connection Peer 接口，使用 Session format 4；旧版历史游标需重新取得基线。
+>
+> 实时流已改为独立 `assistant-stream` 帧，移动端需要按 [rc.2 接入说明](docs/dsh-rc2-mobile-integration.md) 更新订阅、缓存与分页处理。当前修改尚未发布。
+>
+> v0.11.1（当前源码，尚未发布）：新增普通文件分块上传，支持 SHA-256 校验、进度确认、取消与断线清理，复用 DSH 官方附件存储和会话专属凭证，支持文件随消息发送及实时和历史文件引用。App 需按 `file-upload-v1` 能力接入，详见 [移动端普通文件上传对接指南](docs/file-upload-app-integration.md)。
+>
+> v0.11.0：新增智能体团队与子会话协议，支持团队成员、共享任务看板、多层子智能体目录和运行状态实时同步，以及子智能体独立历史、视图切换、继续对话、图片输入与停止执行。APP 需按能力发现接入，详见 [智能体团队 APP 详细接入指南](docs/agent-team-app-integration.md)。
+>
+> v0.10.4：精简会话列表投影，仅保留标题与投影切点，修复大量会话通过公网隧道传输时超时的问题；保留会话元信息和历史完整投影，现有移动客户端无需配套修改。
+>
+> v0.10.3：适配 DSH 0.2.1-rc.2，为 Remote 请求及实时订阅补齐 Connection Peer，修复 `Cannot read properties of undefined (reading 'signal')` 报错，并在网关停止时释放 Peer。移动端协议保持不变。
+>
+> v0.10.2：新增文件卡片事件透传与安全文件引用解析，复用现有分块下载，为移动端文件卡片和正文文件链接预览提供协议支持。App 接入方式见 [文件卡片与预览接入说明](docs/file-cards-mobile-integration.md)。
+>
+> v0.10.1：新增官方语音输入接入，支持语音模型准备与状态同步、移动端音频转文字、取消转写及连接关闭后的任务清理。通过官方 speech Remote 处理识别，移动网关无需打包 ASR 模型。
+>
+> v0.10.0：移动设备面板改为响应式居中设置窗口，跟随主应用深浅色主题；统一自定义下拉菜单与连接状态高亮；配对二维码使用独立模态窗口并支持缩放进出动画；安装重启提醒可按网关运行实例关闭；可信设备默认仅显示在线设备，支持展开离线设备、移动端名称上报与同名编号；Tunnel 切换自动应用，命名配置编辑后保存。
+>
+> v0.9.0：新增 DSH 0.2.0-rc.2 插件管理能力；PC 端可在面板开启、重启 Cloudflare Quick / 命名 Tunnel，使用插件私有缓存中的 `cloudflared` 并校验文件；配对面板增加局域网与外网入口选择指引；工具菜单可重启网关或停止 DSH Web，重启时不再打开新标签页。
+>
+> v0.7.3：优化移动网关运行模式下拉框的箭头间距。
+>
+> v0.7.2：新增独立对话/控制连接、空 Session 创建、停止生成与稍后继续、排队消息同步及编辑/删除/Steer，以及 Session 归档和重命名的双向同步。
+
+## 协议与 DSH 兼容层
+
+移动端连接的是本项目维护的 `dsh-mobile-v1`，不是 DSH 的内部 Remote 协议。插件内部通过独立 Host Adapter 对接 DSH 0.2.1-rc.2 的 Remote Gateway；Session、Workspace、Settings、Commands、Goals、Schedule、Permission Presets、Plugin Manager 等 namespace 和严格参数只存在于该适配层。插件管理的请求帧及 DSH Mobile 页面方案见 [RC2 插件管理对接方案](docs/dsh-0.2.0-rc.2-plugin-management-mobile-integration.md)。
+
+DSH 0.2.1-rc.2 要求每次 Remote 调用携带 `peer`。网关通过 `ctx.connection.createPeer()` 创建一个随插件释放的本机用户 Peer，普通请求、首帧读取和实时订阅都由 Host Adapter 注入它；移动端不能设置调用方身份。问答与审批继续由网关的 Host 监听器处理。旧网关漏传此字段时会出现 `Cannot read properties of undefined (reading 'signal')`，升级 DSH 后需重新安装本源码版本并重启 `dsh web`，手机无需更改协议。
+
+可用本机已安装的官方 DSH 验证此契约（真实 Gateway / Connection，业务服务使用测试数据，不读写用户会话）：
+
+```bash
+DSH_INSTALL_ROOT=/absolute/path/to/@deepseek-ai/dsh node test/host-official.test.mjs
+```
+
+配对鉴权和 `dsh-mobile-v1` / `hello.protocol = 3` 保持不变。新版实时 token 不占用持久事件的 `seq`：客户端显式订阅 `assistantStream: true`，接收原子的 `session-snapshot` 和独立增量；普通 `event` 只携带持久事件。未接入新订阅的客户端只能收到持久消息。
+
+历史响应包含 `historyFormatVersion` 和 `cursor`。客户端格式变化时应清理历史缓存、重新安装基线；携带 `beforeSeq` 的分页或携带 `atSeq` 的 fork 必须同时发送 `historyFormatVersion: 4`。
+当前协议接入与验收见 [rc.2 移动端接入说明](docs/dsh-rc2-mobile-integration.md)；早期迁移记录见 [Remote Gateway 重构实施计划](docs/remote-gateway-refactor-plan.md)。
+
+- WebSocket：`/ws/mobile`
+- 局域网：`ws://<局域网 IP>:3081/ws/mobile`
+- Linux 服务器公网：`wss://<公网 IP>/ws/mobile`
+- 协议文档：[PROTOCOL.md](PROTOCOL.md)
+
+当前源码新增会话模式选择：App 创建空白 Session 后，可查询并修改该 Session 的 Agent preset；首次对话后锁定。通过 `session-agent-preset` 能力发现接入，详见 [App 接入说明](docs/session-agent-preset-app-integration.md)。App 界面需按此说明接入，本次源码尚未发布。
+
+当前源码新增 `turn-outline-v1`：透传 WebUI 使用的完整轮次大纲及实时更新，支持 App 在未加载全部正文时展示会话刻度、问答预览并按需分页跳转。控制连接重建和新设备连接会恢复大纲基线；Host 未提供大纲时可降级为已加载轮次导航。详见 [App 会话轮次导航接入指南](docs/turn-outline-app-integration.md)。App 界面需单独接入，本次源码尚未发布。
+
+当前源码新增 `file-upload-v1`：已配对移动端可通过控制连接分块上传 PDF、Office、压缩包、音频等普通文件，校验 SHA-256 后存入 DSH 官方附件存储，再以会话专属凭证随消息发送。支持进度确认、取消、断线清理及实时/历史文件引用；复用官方 WebUI 的附件准入，不写入客户端指定的主机路径。帧示例、App 状态机、限制及验收见 [移动端普通文件上传对接指南](docs/file-upload-app-integration.md)。App 页面需单独接入，本次源码尚未发布。
+
+当前源码新增 `agent-team-v1`、`subagent-conversations-v1`：支持团队成员与共享任务板查询、各层子智能体目录、团队投影和成员运行状态实时同步，以及子会话独立历史、订阅、继续对话与停止执行。APP 的目标地址、完整 JSON 示例、看板规则、切换与重连状态机、错误处理和验收清单见 [智能体团队 APP 详细接入指南](docs/agent-team-app-integration.md)。本次只提供网关能力，APP 页面需单独接入，源码尚未发布。
+
+## 多网关第一阶段（当前源码）
+
+插件提供稳定 `gatewayId`、可配置 `gatewayName`、配对候选地址列表，以及可持久化的“关闭 / 临时开启 / 常驻开启”运行模式。一个 App 可以分别配对不同机器上的网关；客户端多网关管理仍需按 [App 对接说明](docs/multi-gateway-app-integration.md) 实现。本次源码尚未发布新的 npm 版本。
+
+在“移动设备”面板选择“常驻开启”，网关会持续接受已授权设备连接，重启后保持。常驻需要 DSH 进程运行、机器未休眠且网络可达，不提供自动发现或网络中转。
+
+部署配置示例（对应 mobile-gateway 插件的 `config`）：
+
+```yaml
+gatewayMode: persistent
+gatewayName: 家里电脑
+requireAuth: true
+endpoints:
+  - wss://gateway.example.com/ws/mobile
+  - ws://192.168.1.10:3081/ws/mobile
+```
+
+运行模式的优先级：**已保存的界面选择 > `gatewayMode` > 旧 `gatewayEnabled`**。没有保存选择时，旧配置 `gatewayEnabled: true` 对应常驻，false 对应关闭。
+
+- 关闭：立即断开移动连接，重启后仍关闭。
+- 临时开启：默认 5 分钟没有设备成功连接则关闭并保存关闭状态；成功连接后本次运行保持开启。若以临时模式重启，则重新开始等待首次连接。`gatewayWaitTimeoutMs` 可配置 30 秒至 30 分钟。
+- 常驻开启：没有无人连接关闭计时器。配对码仍默认 5 分钟过期，文件传输超时等独立规则不变。
+
+状态默认保存到 `<deviceFile>.gateway.json`，通常为 `~/.dsh/mobile-gateway-devices.json.gateway.json`；可通过 `gatewayStateFile` 单独配置。文件包含随机 UUID v4 身份及用户选择，权限为 `0600`，使用同目录临时文件原子替换；损坏时启动报错，不能静默生成新身份。每个运行实例必须使用独立的设备注册文件和状态文件。
+
+升级和迁移机器时应一并保留这两个文件。克隆为新的独立网关时，不复制原实例的状态文件和设备注册文件，让新实例生成新身份并重新配对。不要在运行中删除身份文件来恢复默认模式；如需重新使用启动配置，应停止该实例、备份状态文件、仅将其 `mode` 改为 `null`，保留 `version` 和 `gatewayId` 后重启。
+
+`gatewayName` 最多 80 字符，未设置时使用主机名。`endpoints` 是额外候选地址，最多 16 项，每项最多 2048 字符；配对时还会合并首选地址、公网配置与已监听的 LAN 地址，合并超过 16 项会报错。所有地址必须指向同一网关；不得填写 `0.0.0.0` / `::`。地址需要手机实际可达，公网使用 WSS。
+
+测试结果与人工步骤见 [验收报告](docs/multi-gateway-phase1-acceptance.md)，完成范围见 [多网关待办](docs/multi-gateway-todo.md)。
+
+## 配套 Android 与 iOS 客户端
+
+[Whaleness](https://github.com/Clarklevis1995/dsh-mobile) 是与本移动网关配套的独立开发第三方原生客户端，支持 Android 7.0+ 与 iOS / iPadOS 16.1+，通过 Kotlin Multiplatform 共享业务逻辑，分别使用 Jetpack Compose 和 SwiftUI/UIKit 构建界面。支持工作区与会话、实时对话、智能体团队与共享任务、文件上传与预览、文字选择、Markdown 表格、聊天记录与缓存管理、语音输入、问答审批，以及服务端驱动的命令、技能、模型和权限菜单。iPhone Duo 与宽屏布局随方向和可用空间调整，系统效果受 OS 与设备能力限制。下载、连接指南和最新截图见客户端仓库。
+
+> 最新 iOS 产品截图：1.7.10 素材批次拍摄于 2026 年 10 月 22–23 日，iPhone Duo 截图拍摄于 2026 年 10 月 26 日，均展示中文界面。[产品截图来源](https://github.com/Clarklevis1995/dsh-mobile/blob/1fa7aa7e2d3f50379d37fba251fb6e774416703b/Docs/images/screenshots/2026-10-23/SOURCES.md) · [Duo 截图来源](https://github.com/Clarklevis1995/dsh-mobile/blob/1fa7aa7e2d3f50379d37fba251fb6e774416703b/Docs/images/screenshots/2026-10-26-duo/SOURCES.md)。
+
+### iPhone Duo：横屏、竖屏与导航适配
+
+<table>
+  <tr>
+    <td width="50.00%" align="center"><a href="https://raw.githubusercontent.com/Clarklevis1995/dsh-mobile/1fa7aa7e2d3f50379d37fba251fb6e774416703b/Docs/images/screenshots/2026-10-26-duo/landscape-home.webp"><img src="https://raw.githubusercontent.com/Clarklevis1995/dsh-mobile/1fa7aa7e2d3f50379d37fba251fb6e774416703b/Docs/images/screenshots/2026-10-26-duo/landscape-home.webp" alt="展开横屏首页" width="100%"></a></td>
+    <td width="50.00%" align="center"><a href="https://raw.githubusercontent.com/Clarklevis1995/dsh-mobile/1fa7aa7e2d3f50379d37fba251fb6e774416703b/Docs/images/screenshots/2026-10-26-duo/landscape-home-alt.webp"><img src="https://raw.githubusercontent.com/Clarklevis1995/dsh-mobile/1fa7aa7e2d3f50379d37fba251fb6e774416703b/Docs/images/screenshots/2026-10-26-duo/landscape-home-alt.webp" alt="横屏首页背景" width="100%"></a></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>展开横屏首页</strong></td>
+    <td align="center"><strong>横屏首页背景</strong></td>
+  </tr>
+  <tr>
+    <td width="50.00%" align="center"><a href="https://raw.githubusercontent.com/Clarklevis1995/dsh-mobile/1fa7aa7e2d3f50379d37fba251fb6e774416703b/Docs/images/screenshots/2026-10-26-duo/landscape-settings.webp"><img src="https://raw.githubusercontent.com/Clarklevis1995/dsh-mobile/1fa7aa7e2d3f50379d37fba251fb6e774416703b/Docs/images/screenshots/2026-10-26-duo/landscape-settings.webp" alt="横屏设置" width="100%"></a></td>
+    <td width="50.00%" align="center"><a href="https://raw.githubusercontent.com/Clarklevis1995/dsh-mobile/1fa7aa7e2d3f50379d37fba251fb6e774416703b/Docs/images/screenshots/2026-10-26-duo/landscape-conversation.webp"><img src="https://raw.githubusercontent.com/Clarklevis1995/dsh-mobile/1fa7aa7e2d3f50379d37fba251fb6e774416703b/Docs/images/screenshots/2026-10-26-duo/landscape-conversation.webp" alt="横屏会话" width="100%"></a></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>横屏设置</strong></td>
+    <td align="center"><strong>横屏会话</strong></td>
+  </tr>
+  <tr>
+    <td width="50.00%" align="center"><a href="https://raw.githubusercontent.com/Clarklevis1995/dsh-mobile/1fa7aa7e2d3f50379d37fba251fb6e774416703b/Docs/images/screenshots/2026-10-26-duo/landscape-navigation.webp"><img src="https://raw.githubusercontent.com/Clarklevis1995/dsh-mobile/1fa7aa7e2d3f50379d37fba251fb6e774416703b/Docs/images/screenshots/2026-10-26-duo/landscape-navigation.webp" alt="展开导航侧栏" width="100%"></a></td>
+    <td width="50.00%" align="center"><a href="https://raw.githubusercontent.com/Clarklevis1995/dsh-mobile/1fa7aa7e2d3f50379d37fba251fb6e774416703b/Docs/images/screenshots/2026-10-26-duo/portrait-home.webp"><img src="https://raw.githubusercontent.com/Clarklevis1995/dsh-mobile/1fa7aa7e2d3f50379d37fba251fb6e774416703b/Docs/images/screenshots/2026-10-26-duo/portrait-home.webp" alt="展开竖屏首页" width="100%"></a></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>展开导航侧栏</strong></td>
+    <td align="center"><strong>展开竖屏首页</strong></td>
+  </tr>
+</table>
+
+### 团队协作、文件附件与本地存储
+
+<table>
+  <tr>
+    <td width="33.33%" align="center"><a href="https://raw.githubusercontent.com/Clarklevis1995/dsh-mobile/1fa7aa7e2d3f50379d37fba251fb6e774416703b/Docs/images/screenshots/2026-10-23/team-members.webp"><img src="https://raw.githubusercontent.com/Clarklevis1995/dsh-mobile/1fa7aa7e2d3f50379d37fba251fb6e774416703b/Docs/images/screenshots/2026-10-23/team-members.webp" alt="智能体团队成员" width="100%"></a></td>
+    <td width="33.33%" align="center"><a href="https://raw.githubusercontent.com/Clarklevis1995/dsh-mobile/1fa7aa7e2d3f50379d37fba251fb6e774416703b/Docs/images/screenshots/2026-10-23/team-tasks.webp"><img src="https://raw.githubusercontent.com/Clarklevis1995/dsh-mobile/1fa7aa7e2d3f50379d37fba251fb6e774416703b/Docs/images/screenshots/2026-10-23/team-tasks.webp" alt="团队共享任务" width="100%"></a></td>
+    <td width="33.33%" align="center"><a href="https://raw.githubusercontent.com/Clarklevis1995/dsh-mobile/1fa7aa7e2d3f50379d37fba251fb6e774416703b/Docs/images/screenshots/2026-10-23/attachment-picker.webp"><img src="https://raw.githubusercontent.com/Clarklevis1995/dsh-mobile/1fa7aa7e2d3f50379d37fba251fb6e774416703b/Docs/images/screenshots/2026-10-23/attachment-picker.webp" alt="文件与图片选择" width="100%"></a></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>智能体团队成员</strong></td>
+    <td align="center"><strong>团队共享任务</strong></td>
+    <td align="center"><strong>文件与图片选择</strong></td>
+  </tr>
+  <tr>
+    <td width="33.33%" align="center"><a href="https://raw.githubusercontent.com/Clarklevis1995/dsh-mobile/1fa7aa7e2d3f50379d37fba251fb6e774416703b/Docs/images/screenshots/2026-10-23/text-selection.webp"><img src="https://raw.githubusercontent.com/Clarklevis1995/dsh-mobile/1fa7aa7e2d3f50379d37fba251fb6e774416703b/Docs/images/screenshots/2026-10-23/text-selection.webp" alt="独立文字选择页面" width="100%"></a></td>
+    <td width="33.33%" align="center"><a href="https://raw.githubusercontent.com/Clarklevis1995/dsh-mobile/1fa7aa7e2d3f50379d37fba251fb6e774416703b/Docs/images/screenshots/2026-10-23/conversation-files.webp"><img src="https://raw.githubusercontent.com/Clarklevis1995/dsh-mobile/1fa7aa7e2d3f50379d37fba251fb6e774416703b/Docs/images/screenshots/2026-10-23/conversation-files.webp" alt="会话中的文件卡片" width="100%"></a></td>
+    <td width="33.33%" align="center"><a href="https://raw.githubusercontent.com/Clarklevis1995/dsh-mobile/1fa7aa7e2d3f50379d37fba251fb6e774416703b/Docs/images/screenshots/2026-10-23/release-notes.webp"><img src="https://raw.githubusercontent.com/Clarklevis1995/dsh-mobile/1fa7aa7e2d3f50379d37fba251fb6e774416703b/Docs/images/screenshots/2026-10-23/release-notes.webp" alt="应用内版本更新说明" width="100%"></a></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>独立文字选择页面</strong></td>
+    <td align="center"><strong>会话中的文件卡片</strong></td>
+    <td align="center"><strong>应用内版本更新说明</strong></td>
+  </tr>
+  <tr>
+    <td width="33.33%" align="center"><a href="https://raw.githubusercontent.com/Clarklevis1995/dsh-mobile/1fa7aa7e2d3f50379d37fba251fb6e774416703b/Docs/images/screenshots/2026-10-23/storage.webp"><img src="https://raw.githubusercontent.com/Clarklevis1995/dsh-mobile/1fa7aa7e2d3f50379d37fba251fb6e774416703b/Docs/images/screenshots/2026-10-23/storage.webp" alt="本地存储与分类缓存" width="100%"></a></td>
+    <td width="33.33%" align="center"><a href="https://raw.githubusercontent.com/Clarklevis1995/dsh-mobile/1fa7aa7e2d3f50379d37fba251fb6e774416703b/Docs/images/screenshots/2026-10-23/voice-input.webp"><img src="https://raw.githubusercontent.com/Clarklevis1995/dsh-mobile/1fa7aa7e2d3f50379d37fba251fb6e774416703b/Docs/images/screenshots/2026-10-23/voice-input.webp" alt="按住说话输入" width="100%"></a></td>
+    <td width="33.33%" align="center"><a href="https://raw.githubusercontent.com/Clarklevis1995/dsh-mobile/1fa7aa7e2d3f50379d37fba251fb6e774416703b/Docs/images/screenshots/2026-10-23/file-upload.webp"><img src="https://raw.githubusercontent.com/Clarklevis1995/dsh-mobile/1fa7aa7e2d3f50379d37fba251fb6e774416703b/Docs/images/screenshots/2026-10-23/file-upload.webp" alt="输入框中的文件附件" width="100%"></a></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>本地存储与分类缓存</strong></td>
+    <td align="center"><strong>按住说话输入</strong></td>
+    <td align="center"><strong>输入框中的文件附件</strong></td>
+  </tr>
+</table>
+
+## 安装插件
+
+前提：已经安装 `dsh` CLI 和 `pnpm`，并能正常启动 `dsh web`。可先执行 `pnpm --version` 确认当前用户的环境能够找到 `pnpm`。
+
+局域网使用只需安装插件：
+
+```bash
+dsh plugin --profile web add dsh-plugin-mobile-gateway@latest
+```
+
+需要在 Linux 服务器通过公网 IP 接入时，推荐执行统一初始化命令。它会安装/更新插件，并请求一次 sudo 权限安装系统 Helper：
+
+```bash
+npx --yes dsh-plugin-mobile-gateway@latest init
+```
+
+`init` 会把当前正在执行的 npm 包精确版本安装到 DSH profile，并仅对该版本跳过 pnpm 的新版本等待期，确保插件与 Helper 版本一致。
+
+安装后停止并重新启动 WebUI：
+
+```bash
+dsh web
+```
+
+打开 WebUI，确认左侧边栏底部出现“移动设备”。
+
+## 局域网配对
+
+适用于 DSH 电脑和移动设备位于同一个可互访的局域网。
+
+1. 打开 WebUI 的“移动设备”。
+2. 将“网关运行模式”设为“常驻开启”（短期配对也可选“临时开启”）。
+3. 保持“设备鉴权”开启。
+4. 在“配对连接方式”选择“局域网直连”，确认 WebSocket 地址为 `ws://<电脑局域网 IP>:3081/ws/mobile`。即使 Cloudflare Tunnel 已开启，也无需关闭它。选择框旁的问号会按当前网关环境解释各入口并给出场景建议，不会自动更改选择。
+5. 填写设备名称并点击“生成配对二维码”。
+6. 在移动客户端打开设备认证并扫描二维码。
+7. WebUI 的可信设备显示“在线”后即完成。
+
+如果系统防火墙拦截连接，只允许私有网络访问 TCP `3081`。不要把 3081 开放到公网。
+
+## Linux 服务器公网 IP 配对
+
+> [!NOTE]
+> 本文所说的“公网 IP 配对”特指 Linux 服务器。一键公网安装从 `v0.6.4` 开始提供，适用于带固定公网 IPv4 的 Ubuntu/Debian 服务器。服务器需要已经安装 Node.js、`pnpm` 和 `dsh` CLI；当前尚不支持 CentOS。
+
+### 1. 准备公网端口
+
+在云厂商控制台复制服务器的公网 IPv4，并在安全组中放行入站 TCP `80` 和 `443`。不要将 DSH WebUI 端口或 TCP `3081` 开放到公网。
+
+### 2. 一键初始化
+
+先确认普通 DSH 用户可以直接调用 `pnpm`：
+
+```bash
+pnpm --version
+```
+
+然后使用同一个普通用户执行（不要使用 `root` 或 `sudo npx`）：
+
+```bash
+npm_config_registry=https://registry.npmjs.org \
+npx --yes dsh-plugin-mobile-gateway@latest init
+```
+
+该命令会安装或更新插件，并请求一次 sudo 权限安装 Nginx、Certbot、系统 Helper 和证书续期定时器。`init` 会确保 DSH profile 与 Helper 使用同一个精确版本。
+
+完成后启动或重新启动 WebUI：
+
+```bash
+dsh web
+```
+
+### 3. 打开远程 WebUI
+
+优先使用 VS Code、Cursor 等 IDE 自带的端口转发。也可以在自己的电脑执行：
+
+```bash
+ssh -N -L <本地端口>:127.0.0.1:<DSH 实际端口> <服务器用户名>@<服务器公网 IP>
+```
+
+然后在本地浏览器打开：
+
+```text
+http://127.0.0.1:<本地端口>
+```
+
+### 4. 在 UI 配置公网入口
+
+打开左侧的“移动设备”，在“公网接入”填写云厂商控制台提供的公网 IPv4，然后点击“配置公网接入”或“更新公网配置”。Helper 会自动读取当前 `dsh web` 端口并配置 Nginx、TLS 证书和 `wss://<公网 IP>/ws/mobile`。
+
+<p align="center">
+  <img src="docs/assets/public-access-ui.png" alt="在移动设备面板配置公网接入" width="420">
+</p>
+
+### 5. 配对移动设备
+
+1. 开启“允许移动设备连接”，保持“设备鉴权”开启。
+2. 填写设备名称并点击“生成配对二维码”。
+3. 在手机打开设备认证并扫描二维码。
+4. WebUI 的可信设备显示“在线”后即完成。
+
+二维码只能使用一次，并会在 5 分钟后过期；超时后在 WebUI 重新生成即可。
+
+## Windows / macOS 家用电脑远程连接
+
+家用电脑通常没有固定公网 IP，不建议配置路由器端口转发。Windows / macOS 面板提供两种可选入口：无需账户或域名的 Quick Tunnel，以及使用固定域名的命名 Tunnel。插件会在首次开启时自动下载并校验 Cloudflare 官方 `cloudflared`，保存在当前用户的缓存目录；无需手动安装系统服务。
+
+使用前先启动 `dsh web`。电脑必须保持开机、联网且 DSH 进程运行；休眠或进程退出后外网连接会中断。
+
+### Cloudflare Quick Tunnel（一键临时接入）
+
+面板默认使用「自动选择 · 优先内网直连」。需要外网连接时，在「移动设备 → 连接与配对」将「配对连接方式」改为「自动选择 · 优先外网」或「Cloudflare 外网」；外网入口尚未就绪时，配对区域下方会显示粉红色配置引导。在下方 Cloudflare Tunnel 配置中选择「Quick Tunnel · 无需域名」，点击「一键开启 Quick Tunnel」。面板会在首次运行时下载 `cloudflared`，连接后显示随机的 `wss://<名称>.trycloudflare.com/ws/mobile`，并自动将其填为配对地址。需要在局域网内直连时，将“配对连接方式”改回“自动选择 · 优先内网直连”或“局域网直连”；Tunnel 可以继续开启。生成二维码，用手机 App 扫码即可。关闭开关会停止隧道；DSH 再次启动时会恢复已开启的 Quick 模式并取得**新的随机地址**。
+
+Quick Tunnel 无需 Cloudflare 账户、Token 或自己的公网域名，但地址在 DSH 重启或隧道重连后可能变化。手机 App 只信任已确认的地址，因此地址变化后需在面板重新生成二维码并扫码更新配对；**仅凭 PC 在线不能保证旧地址继续可用**。Cloudflare 将 Quick Tunnel 定位于测试和开发，当前有并发请求上限且不提供可用性保证。参见 [Cloudflare Quick Tunnel 文档](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/trycloudflare/)。
+
+面板中的“更新 Tunnel 配置”保存所选模式及命名 Tunnel 参数；配置不变时不会重新连接。“重启 Tunnel”会断开当前移动连接并重建 Cloudflare 隧道，不会重启 DSH Web；Quick Tunnel 重启后可能取得新地址，旧二维码会清除，需按新地址重新扫码。此操作不会自动升级 `cloudflared` 到最新版本。
+
+### Cloudflare 命名 Tunnel（固定地址）
+
+1. 在 [Cloudflare 控制台创建远程管理的 Tunnel](https://developers.cloudflare.com/tunnel/get-started/)，添加一个公开域名（例如 `gateway.example.com`），将该路由的 **Service URL** 设为 `http://127.0.0.1:3082`。无需安装 Cloudflare 系统服务，也无需开放路由器入站端口。
+2. 从 Tunnel 的「Add a replica」安装命令中复制 Token，在 DSH「移动设备 → Cloudflare Tunnel」选择「命名 Tunnel · 固定域名」，输入公开域名和 Token 后开启。插件会将网关设为常驻模式，启动本机专用入口和 `cloudflared`。隧道传输连接后，面板会独立检测本机到公网入口的 DNS、TLS 和移动网关路由；检测通过后使用自动填入的 `wss://gateway.example.com/ws/mobile` 生成配对二维码。
+3. 以后启动 `dsh web` 会自动恢复已开启的 Tunnel；在面板点击「关闭 Cloudflare Tunnel」会停止插件管理的 `cloudflared` 并关闭本机专用入口。若手动关闭网关，Tunnel 会暂停，重新开启网关后恢复。
+
+两种 Cloudflare 入口都只接受 `/ws/mobile` WebSocket，其他 HTTP 路径（包括 DSH WebUI 和 `/mgw` 管理接口）返回 404；设备凭证始终必需，即使本机 Debug 鉴权被关闭也一样。命名 Tunnel 的 Token 保存在 `<deviceFile>.cloudflare.json`（默认 `~/.dsh/mobile-gateway-devices.json.cloudflare.json`），权限为 `0600`，不会返回给浏览器。默认使用 DSH 私有的 `cloudflared-bin` 缓存，不读取系统或其他 App 的 `cloudflared`；每次启动 Tunnel 都校验缓存文件，只有缓存缺失或损坏时才下载固定版本并核对 Cloudflare 官方发布资产的 SHA-256。仅在显式配置 `cloudflaredPath` 时使用外部程序。使用自定义 `cloudflarePort` 时，命名 Tunnel 路由的 Service URL 端口也要相应修改。
+
+#### 公网入口检测与状态含义
+
+`state: online` 只表示 cloudflared 已注册隧道连接，不保证公开域名、TLS 或源站路由可用。状态 API 另外提供 `endpointHealth`（状态、提示、检测时间及错误码）和 `publicReady`。面板在连接后自动检测一次，也可点击「检测公网 DNS / TLS / WebSocket」重试；该按钮调用受现有管理鉴权保护的 `POST /mgw/cloudflare/check`，不会重启隧道。
+
+检测使用本机系统 DNS 和严格证书校验的 HTTPS WebSocket 请求，不携带配对码或设备 Token，不跟随重定向。只有 HTTP 401 且移动网关回显本次随机探测标记时，才确认受鉴权保护的网关路由可达；代理或 Cloudflare Access 的普通 401 不会被当作成功。该标记只在缺少有效设备凭证的拒绝响应中回显，不授予任何访问权限。结果是一次本机网络快照，不保证手机网络、设备鉴权或会话同步成功。
+
+本机解析失败不代表公共 DNS 记录必然不存在：刚创建记录时可能仍有 NXDOMAIN 缓存，也可能受本机 DNS、VPN 或代理影响。核对公开主机名和已代理 CNAME，再稍后重试，不要关闭 TLS 校验。插件目前使用 Tunnel Token 运行远程管理的隧道，该 Token 不会自动创建域名路由或 DNS；具备额外账户授权的 cloudflared CLI / Cloudflare API 可以配置这些资源，但不属于本检测功能。
+
+### Tailscale（推荐长期使用）
+
+1. 在电脑和手机安装 [Tailscale](https://tailscale.com/download)，并登录同一个 Tailnet。
+2. 在 Windows PowerShell 或 macOS 终端执行：
+
+```bash
+tailscale serve --bg 3081
+```
+
+3. 执行 `tailscale serve status` 查看生成的 `https://<设备名>.<tailnet>.ts.net` 地址。
+4. 将地址改为 `wss://<设备名>.<tailnet>.ts.net/ws/mobile`，填入 WebUI 的“WebSocket 地址”，再生成二维码配对。
+
+Tailscale Serve 只允许同一 Tailnet 中符合访问规则的设备连接，并自动提供 HTTPS。可用 `tailscale serve reset` 停止转发。参见 [Tailscale Serve 文档](https://tailscale.com/docs/reference/tailscale-cli/serve)。
+
+## 网关配置方式总览
+
+| 使用场景 | 推荐入口 | 移动端 WebSocket 地址 | 需要的额外配置 | 端口与鉴权 |
+|---|---|---|---|---|
+| 同一局域网 | 插件局域网入口 | `ws://<电脑局域网 IP>:3081/ws/mobile` | 无需 Helper 或 Nginx；电脑与手机 位于可互访的局域网 | 仅对私有网络放行 TCP `3081`；保持鉴权开启 |
+| 本机 iOS 模拟器 | DSH WebUI 本地入口 | `ws://127.0.0.1:<DSH WebUI 端口>/ws/mobile` | 无需 Helper、Nginx 或独立的 `3081` 端口 | 不开放任何外部端口；仅 Debug 时可关闭鉴权 |
+| Linux 公网服务器 | 插件 Helper + Nginx + TLS | `wss://<服务器公网 IPv4>/ws/mobile` | 执行 `init`，再从 WebUI 填写公网 IPv4 | 云安全组放行 TCP `80/443`；不要公开 DSH 端口和 `3081`；必须鉴权 |
+| 家用 Windows / macOS | Cloudflare 命名 Tunnel | `wss://<公开域名>/ws/mobile` | 在 Cloudflare 建立公开域名到 `127.0.0.1:3082` 的路由；面板填写域名与 Token 并开启 | 无需路由器端口转发；独立入口强制设备鉴权 |
+| 家用 Windows / macOS | Cloudflare Quick Tunnel | `wss://<随机名称>.trycloudflare.com/ws/mobile` | 面板一键开启；重启或重连后地址变化需重新扫码 | 无需域名、账户或端口转发；独立入口强制设备鉴权 |
+| 家用 Windows / macOS | Tailscale Serve | `wss://<Tailscale 域名>/ws/mobile` | 手动转发到 `127.0.0.1:3081`，将生成的地址填入 WebUI | 无需路由器端口转发；保持鉴权开启 |
+
+## Linux 服务器公网入口管理
+
+查看状态：
+
+```bash
+sudo env "PATH=$PATH" npx --yes dsh-plugin-mobile-gateway@latest status
+```
+
+移除公网入口：
+
+```bash
+sudo env "PATH=$PATH" npx --yes dsh-plugin-mobile-gateway@latest remove
+```
+
+## 更新插件
+
+重新运行初始化命令会同时更新插件和系统 Helper：
+
+```bash
+npx --yes dsh-plugin-mobile-gateway@latest init
+```
+
+随后停止并重新启动 `dsh web`。
+
+## 卸载插件
+
+```bash
+dsh plugin --profile web remove dsh-plugin-mobile-gateway
+```
+
+如需同时移除系统 Helper（不会删除现有 Nginx 公网配置）：
+
+```bash
+sudo env "PATH=$PATH" npx --yes dsh-plugin-mobile-gateway@latest remove-helper
+```
+
+## 常见问题
+
+| 现象 | 处理方式 |
+|---|---|
+| WebUI 没有“移动设备” | 确认安装在 `web` profile，并完整重启 `dsh web` |
+| 移动端 收到 `503` | 回到 WebUI 开启“允许移动设备连接” |
+| 移动端 收到 `401` | 在 WebUI 重新生成二维码并配对 |
+| Linux 服务器公网连接超时 | 检查云安全组、服务器防火墙和 TCP `80/443` |
+| Linux 服务器公网地址没有显示 | 在“移动设备 → 公网接入”填写公网 IPv4 并点击更新 |
+| Cloudflare 下载失败 | 检查 PC 到 GitHub Releases 的连接；也可自行安装 cloudflared，并把 `cloudflaredPath` 设为可执行文件的绝对路径 |
+| Quick Tunnel 重启后 App 无法连接 | Quick 地址可能已变化，在面板重新生成二维码并让 App 扫码更新配对；需要固定地址时改用命名 Tunnel |
+| Quick Tunnel 未能启动且 PC 已有 Cloudflare 配置 | Cloudflare 当前不支持 Quick Tunnel 与 `~/.cloudflared/config.yaml` 共用该配置目录；检查面板错误并按 [官方说明](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/trycloudflare/) 处理 |
+| Cloudflare 已连接但 App 无法访问 | 确认公开域名路由的 Service URL 是面板显示的 `http://127.0.0.1:<端口>`，并检查 DNS 与设备配对凭证 |
+| 需要查看服务端日志 | 查看系统临时目录中的 `mobile-gateway.log`（Windows：`%TEMP%`；macOS：`$TMPDIR`；Linux 通常为 `/tmp`） |
+
+## 源码开发
+
+```bash
+dsh plugin --profile web add file:/absolute/path/to/dsh-plugin-mobile-gateway
+npm test
+```
+
+面板右上角“工具”菜单提供“重启当前网关”和“停止 DSH Web”。重启只在通过 `dsh web` 启动时可用，会结束当前 Web 进程并沿用原启动参数重新运行；重启时自动加入 `--no-open`，不会再打开新的浏览器标签页，当前标签页会等待恢复并刷新。重启后的进程在后台运行，不再由原 Terminal 前台任务管理；需要关闭时可在同一菜单点击“停止 DSH Web”，或在 Terminal 找到监听 Web 端口的 DSH 进程并发送 `SIGTERM`。重启期间连接会短暂中断，Quick Tunnel 的外网地址可能随之改变。源码修改后需重新安装插件并重启 `dsh web`。
+
+
+## 官方语音输入
+
+网关已接入 DSH 0.2.0-rc.2 官方实验性语音输入插件。移动端可以查询识别器、订阅模型准备进度、准备模型、设置识别偏好，以及提交录音取得文字。取消和断线会中止转写，结果不会自动发送给 Agent。
+
+1. 在 DSH 插件管理中启用“语音输入”（`@deepseek-ai/dsh-experimental-voice-input-bundle`），下载并准备模型。
+2. 客户端通过已配对的 control WebSocket 查询 `speech-catalog`，确认插件可用及模型 `ready`/`standby`。
+3. 长按录音、松手后，将完整音频转换为 16 kHz 单声道 PCM16 WAV，通过 `speech-transcribe` 上传 Base64。
+4. 收到 `speech-transcript` 后将文字填入输入框，用户确认后使用现有 `message` 发送。
+
+模型运行在 DSH 电脑上，手机无需携带识别权重。当前只提供完整录音转写；客户端的录音按钮、权限申请和音频转换仍须接入。接口、准备流程和错误处理见 [协议说明](PROTOCOL.md#官方语音输入speech-input-v1)。
+
+可用已安装的官方插件核对真实 WAV 校验（识别 Provider 使用测试替身，不下载模型）：
+
+```bash
+DSH_INSTALL_ROOT=/absolute/path/to/@deepseek-ai/dsh node test/speech-official.test.mjs
+```

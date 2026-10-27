@@ -498,7 +498,7 @@ dsh plugin --profile web remove dsh-plugin-mobile-gateway
 | 真机连不上 `127.0.0.1` | 在手机上 `127.0.0.1` 指手机自己；用面板给出的私有 IP 地址 |
 | 同 Wi-Fi 仍连不上 | 网络可能开了客户端隔离；放行电脑入站 TCP `3081` |
 | 修改配置没生效 | 插件与组合配置只在启动时加载，需重启 WebUI |
-| 需要排查服务端 | 看 `/tmp/mobile-gateway.log`，含连接 / 鉴权 / 查询 / 错误记录 |
+| 需要排查服务端 | 看系统临时目录中的 `mobile-gateway.log`（Windows 为 `%TEMP%`），含连接 / 鉴权 / 查询 / 错误记录 |
 
 ### 7. 源码开发
 
