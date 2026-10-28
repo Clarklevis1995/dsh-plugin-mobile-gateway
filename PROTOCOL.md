@@ -76,7 +76,19 @@ const pairingText = Buffer.from(JSON.stringify(payload), 'utf8').toString('base6
 
 客户端必须先执行严格 Base64URL 解码（只允许 `A-Z a-z 0-9 - _`，不接受 `=` padding、原始 JSON 或普通 Base64），再解析 JSON 并检查 `version` 与 `expiresAt`。
 
-首次连接必须请求子协议 `dsh-mobile-v1, dsh-pair.<pairingCode>`，并携带 `X-DSH-Device-ID` 请求头；缺少稳定设备 ID 的配对请求会被拒绝，避免每次重连都创建新的可信设备。该值应为客户端在 Keychain 中持久保存的安装级随机 UUID，仅用于重新配对时复用可信设备记录，不能替代配对码或设备 token 完成鉴权。兼容实现也可把一次性配对码放在 `?pairingCode=`；但子协议不会进入常见的 URL access log，因此优先使用子协议。成功后服务端依次发送：
+首次连接必须请求子协议 `dsh-mobile-v1, dsh-pair.<pairingCode>`，并通过 `X-DSH-Device-ID` 请求头或下述 `dsh-device.<clientDeviceId>` 子协议提供稳定设备 ID；缺少或包含非法设备 ID 的配对请求会被拒绝，避免每次重连都创建新的可信设备。该值应为客户端持久保存的安装级随机 UUID（iOS 可存入 Keychain），仅用于重新配对时复用可信设备记录，不能替代配对码或设备 token 完成鉴权。兼容实现也可把一次性配对码放在 `?pairingCode=`；但子协议不会进入常见的 URL access log，因此优先使用子协议。
+
+浏览器等无法设置自定义握手头的客户端，可以把同一安装级设备 ID 与设备名放进子协议列表：
+`dsh-mobile-v1, dsh-pair.<pairingCode>, dsh-device.<clientDeviceId>, dsh-device-name.<base64url(设备名)>`。
+服务端只在缺少 `X-DSH-Device-ID` / `X-DSH-Device-Name`（或该头无效）时回退读取
+`dsh-device.` / `dsh-device-name.` 前缀。子协议中的设备 ID 使用 8–128 个
+`A-Z a-z 0-9 . _ -` 字符，不能包含请求头格式额外允许的 `:`，因为后者不是合法的
+WebSocket 子协议 token 字符；浏览器直接持久化并使用 UUID 即可。设备名的 UTF-8
+Base64URL 编码最长 512 字符。对于上述有效输入，两种传递方式语义相同，`clientDeviceId`
+仍不是凭证，设备名只用于展示，配对码与长期 token 的要求不变。握手时服务端只协商回
+`dsh-mobile-v1`，不会回显 `dsh-device.` / `dsh-device-name.` 或任何密钥。
+
+成功后服务端依次发送：
 
 ```json
 { "kind": "paired", "token": "<长期设备 token>",
@@ -89,6 +101,8 @@ const pairingText = Buffer.from(JSON.stringify(payload), 'utf8').toString('base6
 
 - 推荐：HTTP 请求头 `Authorization: Bearer <token>`
 - WebSocket 子协议：`dsh-mobile-v1, dsh-auth.<token>`
+- 无法设置请求头的浏览器：`dsh-mobile-v1, dsh-auth.<token>, dsh-device.<clientDeviceId>`
+  （`dsh-device.` 仅用于复用可信设备记录，可省略）
 
 长期 token 默认禁止放在 URL query 中，避免被代理日志、浏览器历史和监控系统记录。缺少凭证、凭证无效、配对码过期或重复使用时，HTTP Upgrade 返回 `401 Unauthorized`。
 
