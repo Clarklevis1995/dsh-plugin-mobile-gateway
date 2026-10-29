@@ -328,6 +328,7 @@ function expectRejected(url, options = {}) {
     'queue-control',
     'session-archive',
     'session-rename',
+    'workspace-manage-v1',
     'file-downloads',
     'file-references-v1',
   ])

@@ -93,7 +93,7 @@ Base64URL 编码最长 512 字符。对于上述有效输入，两种传递方�
 ```json
 { "kind": "paired", "token": "<长期设备 token>",
   "device": { "id": "...", "name": "iPhone", "createdAt": 1787111700000 } }
-{ "kind": "hello", "protocol": 3, "capabilities": ["split-channels", "images", "commands", "tasks", "goals", "session-cancel", "queue-control", "session-archive", "session-rename", "file-downloads"], "authenticated": true,
+{ "kind": "hello", "protocol": 3, "capabilities": ["split-channels", "images", "commands", "tasks", "goals", "session-cancel", "queue-control", "session-archive", "session-rename", "workspace-manage-v1", "file-downloads"], "authenticated": true,
   "device": { "id": "...", "name": "iPhone" }, "port": 3080, "clients": 1 }
 ```
 
@@ -1018,6 +1018,8 @@ WebUI 中的“任务”与“进行中的目标”分别对应 DSH 的 `todos` 
 |---|---|---|
 | `workspaces` | — | 全部工作区（含每个的 `sessionIds`） |
 | `workspace-create` | `path` | 对**已存在目录**创建工作区（已归属→`created:false` 幂等） |
+| `workspace-rename` | `workspaceId`, `title` | 重命名工作区；`title` 去空白后必须非空且全局唯一（由 Host 判定） |
+| `workspace-delete` | `workspaceId` | 注销一个工作区注册；**保留**目录与会话记录 |
 | `directories` | `path?` | 浏览 server 目录（缺省 = home）；`crumbs` 面包屑 + `entries`（含 `hidden` 标记） |
 | `directory-create` | `path`, `name` | 在父目录下创建一个子文件夹 |
 
@@ -1026,6 +1028,25 @@ WebUI 中的“任务”与“进行中的目标”分别对应 DSH 的 `todos` 
 → { "kind": "workspace-create", "workspace": { "workspaceId": "w9", "path": "...", "title": "...", "sessionIds": [] },
     "created": true }
 ```
+
+### 重命名与删除工作区
+
+两者对齐 DSH 官方桌面端的工作区「…」菜单，分别代理 Host 的 `workspace/rename` 与 `workspace/delete` Remote 方法（DSH 0.2.1-rc.3 起提供）：
+
+```json
+{ "type": "workspace-rename", "workspaceId": "w9", "title": "  DeepseekHarness  " }
+→ { "kind": "workspace-renamed", "workspace": { "workspaceId": "w9", "path": "...", "title": "DeepseekHarness",
+    "sessionIds": [], "createdAt": "...", "updatedAt": "..." } }
+
+{ "type": "workspace-delete", "workspaceId": "w9" }
+→ { "kind": "workspace-deleted", "workspaceId": "w9", "deleted": true }
+```
+
+- `workspaceId` 必须是去空白后非空的字符串；`title` 必须是 `string` 且去空白后非空，否则返回 `bad-request`（错误帧带 `requestType` 与 `workspaceId`）。网关转给 Host 的 `title` 已 `trim`。
+- 重命名成功回包回显 Host 的完整 `WorkspaceView`；Host 未返回 `workspace` 时网关返回 `internal` 错误帧（`requestType: "workspace-rename"`）。
+- 重命名可能因**标题重复**被 Host 拒绝（DSH 要求标题唯一），删除可能因工作区不存在被拒绝；此时错误帧原样透传 Host 的 `code` 与 `message`，并补上 `requestType` 与 `workspaceId`，客户端应按 code 提示而不是当成 `bad-request`。
+- 删除只注销工作区注册，`path` 指向的目录与其中的会话记录保留；删除后客户端应重发 `workspaces` 与 `sessions` 刷新列表。
+- `hello.capabilities` 包含 `workspace-manage-v1` 表示支持这两个请求；老网关没有该能力时应隐藏菜单入口。
 
 ### 创建文件夹
 
@@ -1182,7 +1203,7 @@ Control/旧单连接接收全局模式状态增量，不受所订阅会话过滤
 | kind | 触发时机 |
 |---|---|
 | `paired` | 首次配对成功；仅此一次返回长期设备 token |
-| `hello` | 连接成功：`{ "kind":"hello", "protocol":3, "capabilities":["split-channels","images","commands","tasks","goals","session-cancel","queue-control","session-archive","session-rename","file-downloads"], "authenticated":true, "port":3080, "clients":1 }` |
+| `hello` | 连接成功：`{ "kind":"hello", "protocol":3, "capabilities":["split-channels","images","commands","tasks","goals","session-cancel","queue-control","session-archive","session-rename","workspace-manage-v1","file-downloads"], "authenticated":true, "port":3080, "clients":1 }` |
 | `event` | 任意会话的 agent 输出（见下） |
 | `session-queues` / `session-queue` | Host 队列完整快照 / 单个 Session 队列替换值 |
 | `session-archives` | Host 的完整 Session 归档集合在连接初始化或 WebUI/App 归档后变化 |
@@ -1257,7 +1278,8 @@ DSH Web 的“深度求索中，用时 22 秒 ···”是客户端文案，不�
 
 | 版本 | 新增 |
 |---|---|
-| v0.10.4（当前源码） | 精简 `sessions` 列表投影，仅保留 `asOfSeq` 和 `values.title`，修复大量会话通过公网隧道传输时超时的问题；保留会话元信息和历史完整投影，现有移动客户端无需配套修改 |
+| v0.12.0（当前源码） | 新增工作区管理：`workspace-rename` / `workspace-delete` 请求、`workspace-renamed` / `workspace-deleted` 回包与 `workspace-manage-v1` 能力；代理 Host `workspace/rename`、`workspace/delete`，错误帧透传 Host 错误码 |
+| v0.10.4 | 精简 `sessions` 列表投影，仅保留 `asOfSeq` 和 `values.title`，修复大量会话通过公网隧道传输时超时的问题；保留会话元信息和历史完整投影，现有移动客户端无需配套修改 |
 | v0.10.3 | 适配 DSH 0.2.1-rc.2；为 Remote 请求及实时订阅补齐 Connection Peer，修复读取 `signal` 时的空值报错，并随网关停止释放 Peer；移动端协议保持不变 |
 | v0.10.2 | 补齐 `deliverables/presented` 文件卡片实时字段；新增 `file-references-v1` 能力与 `file-resolve` 安全文件引用解析；复用现有分块下载支持移动端预览接入 |
 | v0.10.1 | 新增官方 speech Remote 语音输入桥接；模型准备与状态同步；移动端音频转文字与取消转写；连接关闭时清理语音任务 |

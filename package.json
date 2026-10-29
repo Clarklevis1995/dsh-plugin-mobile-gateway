@@ -1,7 +1,7 @@
 {
   "name": "dsh-plugin-mobile-gateway",
-  "version": "0.11.1",
-  "description": "DeepSeek Harness 移动网关，支持安全设备配对、实时会话同步、智能体团队与子会话、插件管理、官方语音输入，以及局域网和 Cloudflare Tunnel。0.11.1 新增普通文件分块上传，支持 SHA-256 校验、进度确认、取消与断线清理，复用 DSH 官方附件存储和会话专属凭证，支持文件随消息发送及实时和历史文件引用；提供详细 App 对接指南。",
+  "version": "0.12.0",
+  "description": "DeepSeek Harness 移动网关，支持安全设备配对、实时会话同步、智能体团队与子会话、插件管理、官方语音输入，以及局域网和 Cloudflare Tunnel。0.12.0 新增工作区重命名与删除（workspace-rename / workspace-delete 请求与 workspace-manage-v1 能力），代理宿主 workspace/rename 与 workspace/delete，对齐 DSH 官方桌面端的工作区菜单；0.11.1 新增普通文件分块上传，支持 SHA-256 校验、进度确认、取消与断线清理，复用 DSH 官方附件存储和会话专属凭证，支持文件随消息发送及实时和历史文件引用；提供详细 App 对接指南。",
   "main": "lib/index.mjs",
   "files": [
     "bin",

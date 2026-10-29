@@ -195,6 +195,17 @@ assert.deepEqual(await host.workspace.archiveSession({ sessionId: 's1' }), { acc
 const archiveCall = calls.find((call) => call.namespace === 'workspace' && call.method === 'archiveSession')
 assert.deepEqual(archiveCall.args, { request: { sessionId: 's1' } })
 
+// 工作区重命名/删除映射到官方 workspace/rename 与 workspace/delete Remote 方法。
+assert.deepEqual(await host.workspace.rename({ workspaceId: 'w1', title: 'x' }), { accepted: true })
+const workspaceRenameCall = calls.find((call) => call.namespace === 'workspace' && call.method === 'rename')
+assert.deepEqual(workspaceRenameCall.args, { request: { workspaceId: 'w1', title: 'x' } })
+assert.equal(workspaceRenameCall.peer, peer)
+
+assert.deepEqual(await host.workspace.remove({ workspaceId: 'w1' }), { accepted: true })
+const workspaceDeleteCall = calls.find((call) => call.namespace === 'workspace' && call.method === 'delete')
+assert.deepEqual(workspaceDeleteCall.args, { request: { workspaceId: 'w1' } })
+assert.equal(workspaceDeleteCall.peer, peer)
+
 const workspaceStreamAbort = new AbortController()
 const workspaceStream = await host.openWorkspaceStream(workspaceStreamAbort.signal)
 const workspaceOpening = await workspaceStream[Symbol.asyncIterator]().next()

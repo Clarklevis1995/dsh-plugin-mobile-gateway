@@ -92,6 +92,58 @@ const assert = await import('node:assert/strict')
   assert.equal(failed.requestId, 'r2')
 }
 
+// Workspace rename/delete proxy the Host mutation and keep the Host error code.
+{
+  const renameCalls = []
+  const deleteCalls = []
+  const workspace = { workspaceId: 'w1', path: '/tmp', title: '改后', sessionIds: [], createdAt: 'c', updatedAt: 'u' }
+  const api = { workspace: {
+    rename: async (payload) => { renameCalls.push(payload); return { workspace } },
+    remove: async (payload) => { deleteCalls.push(payload); return { deleted: true } },
+  } }
+  const renamed = await handleQuery(api, null, null, { type: 'workspace-rename', workspaceId: ' w1 ', title: '  改后  ' })
+  assert.deepEqual(renamed, { kind: 'workspace-renamed', workspace })
+  assert.deepEqual(renameCalls, [{ workspaceId: 'w1', title: '改后' }])
+
+  const deleted = await handleQuery(api, null, null, { type: 'workspace-delete', workspaceId: ' w1 ' })
+  assert.deepEqual(deleted, { kind: 'workspace-deleted', workspaceId: 'w1', deleted: true })
+  assert.deepEqual(deleteCalls, [{ workspaceId: 'w1' }])
+
+  assert.deepEqual(await handleQuery(api, null, null, { type: 'workspace-rename', title: 'x' }), {
+    kind: 'error', code: 'bad-request', message: 'workspace-rename requires a workspaceId', requestType: 'workspace-rename',
+  })
+  assert.deepEqual(await handleQuery(api, null, null, { type: 'workspace-rename', workspaceId: '  ', title: 'x' }), {
+    kind: 'error', code: 'bad-request', message: 'workspace-rename requires a workspaceId', requestType: 'workspace-rename',
+  })
+  assert.deepEqual(await handleQuery(api, null, null, { type: 'workspace-rename', workspaceId: 'w1', title: '   ' }), {
+    kind: 'error', code: 'bad-request', message: 'workspace-rename requires a non-empty title',
+    requestType: 'workspace-rename', workspaceId: 'w1',
+  })
+  assert.deepEqual(await handleQuery(api, null, null, { type: 'workspace-delete' }), {
+    kind: 'error', code: 'bad-request', message: 'workspace-delete requires a workspaceId', requestType: 'workspace-delete',
+  })
+
+  // Host rejections (duplicate/blank title, unknown workspace) keep their code.
+  api.workspace.rename = async () => { throw Object.assign(new Error('title already used'), { code: 'workspace/title-taken' }) }
+  assert.deepEqual(await handleQuery(api, null, null, { type: 'workspace-rename', workspaceId: 'w1', title: '重复' }), {
+    kind: 'error', code: 'workspace/title-taken', message: 'title already used',
+    requestType: 'workspace-rename', workspaceId: 'w1',
+  })
+  api.workspace.remove = async () => { throw Object.assign(new Error('no such workspace'), { code: 'workspace/not-found' }) }
+  assert.deepEqual(await handleQuery(api, null, null, { type: 'workspace-delete', workspaceId: 'missing' }), {
+    kind: 'error', code: 'workspace/not-found', message: 'no such workspace',
+    requestType: 'workspace-delete', workspaceId: 'missing',
+  })
+
+  // A Host reply without the renamed Workspace is a gateway-side contract break.
+  api.workspace.rename = async () => ({})
+  const broken = await handleQuery(api, null, null, { type: 'workspace-rename', workspaceId: 'w1', title: 'x' })
+  assert.equal(broken.kind, 'error')
+  assert.equal(broken.code, 'internal')
+  assert.equal(broken.requestType, 'workspace-rename')
+  assert.equal(broken.workspaceId, 'w1')
+}
+
 // Compact V4 history and reject stale/unversioned cursor coordinates before RPC.
 {
   const stream = [{ type: 'text-chunks', time0: 1, index: 0, dt: [], texts: ['x'.repeat(100_000)] },
@@ -169,6 +221,7 @@ function fakeApi() {
   const queueUpdateCalls = []
   const archiveCalls = []
   const renameCalls = []
+  const workspaceCalls = []
   const settingsUpdates = []
   const goalCalls = []
   const imageAttachment = {
@@ -192,6 +245,7 @@ function fakeApi() {
     queueUpdateCalls,
     archiveCalls,
     renameCalls,
+    workspaceCalls,
     settingsUpdates,
     goalCalls,
     get _createCalls() { return createCalls },
@@ -234,6 +288,16 @@ function fakeApi() {
       async archiveSession(req) {
         archiveCalls.push(req.payload)
         return { rpcId: 'r', result: { ok: true, value: { archivedSessionIds: [req.payload.sessionId] } } }
+      },
+      async rename(req) {
+        workspaceCalls.push({ method: 'rename', payload: req.payload })
+        return { rpcId: 'r', result: { ok: true, value: {
+          workspace: { workspaceId: req.payload.workspaceId, path: '/tmp/w1', title: req.payload.title, sessionIds: [], createdAt: 'c', updatedAt: 'u2' },
+        } } }
+      },
+      async delete(req) {
+        workspaceCalls.push({ method: 'delete', payload: req.payload })
+        return { rpcId: 'r', result: { ok: true, value: { deleted: true } } }
       },
     },
     settings: {
@@ -374,6 +438,8 @@ ctx.typertGateway = {
     }
     if (req.namespace === 'workspace' && req.method === 'create') return unwrap(api.workspace.create)
     if (req.namespace === 'workspace' && req.method === 'archiveSession') return unwrap(api.workspace.archiveSession)
+    if (req.namespace === 'workspace' && req.method === 'rename') return unwrap(api.workspace.rename)
+    if (req.namespace === 'workspace' && req.method === 'delete') return unwrap(api.workspace.delete)
     if (req.namespace === 'settings' && req.method === 'describe') return unwrap(api.settings.describe, {})
     if (req.namespace === 'settings' && req.method === 'update') {
       return unwrap(api.settings.update, { ns: req.args.ns, patch: req.args.patch })
@@ -1249,6 +1315,11 @@ function waitFor(pred, timeout) { return new Promise((res) => { const t0 = Date.
     ['session rename', { type: 'session-rename', sessionId: 's1', title: ' App 新名称 ' }, (m) => m.kind === 'session-renamed' && m.sessionId === 's1' && m.title === 'App 新名称' && m.seq === 95 && api.renameCalls.some((call) => call.sessionId === 's1' && call.title === ' App 新名称 ')],
     ['session rename empty title', { type: 'session-rename', sessionId: 's1', title: '   ' }, (m) => m.kind === 'error' && m.code === 'bad-request' && m.requestType === 'session-rename'],
     ['session rename missing sessionId', { type: 'session-rename', title: '新名称' }, (m) => m.kind === 'error' && m.code === 'bad-request' && m.requestType === 'session-rename'],
+    ['workspace rename', { type: 'workspace-rename', workspaceId: ' w1 ', title: ' 新工作区 ' }, (m) => m.kind === 'workspace-renamed' && m.workspace.workspaceId === 'w1' && m.workspace.title === '新工作区' && api.workspaceCalls.some((call) => call.method === 'rename' && call.payload.workspaceId === 'w1' && call.payload.title === '新工作区')],
+    ['workspace rename empty title', { type: 'workspace-rename', workspaceId: 'w1', title: '  ' }, (m) => m.kind === 'error' && m.code === 'bad-request' && m.requestType === 'workspace-rename' && m.workspaceId === 'w1'],
+    ['workspace rename missing workspaceId', { type: 'workspace-rename', title: 'x' }, (m) => m.kind === 'error' && m.code === 'bad-request' && m.requestType === 'workspace-rename'],
+    ['workspace delete', { type: 'workspace-delete', workspaceId: 'w1' }, (m) => m.kind === 'workspace-deleted' && m.workspaceId === 'w1' && m.deleted === true && api.workspaceCalls.some((call) => call.method === 'delete' && call.payload.workspaceId === 'w1')],
+    ['workspace delete missing workspaceId', { type: 'workspace-delete' }, (m) => m.kind === 'error' && m.code === 'bad-request' && m.requestType === 'workspace-delete'],
     ['models global (no sessionId)', { type: 'models' }, (m) => m.kind === 'models' && m.groups.length === 1 && m.groups[0].models[0].id === 'deepseek-chat' && m.current === undefined],
     ['providers', { type: 'providers' }, (m) => m.kind === 'providers' && m.providers[0].provider === 'deepseek'],
     ['missing sessionId', { type: 'history' }, (m) => m.kind === 'error' && m.code === 'bad-request'],
