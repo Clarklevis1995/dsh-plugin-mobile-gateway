@@ -10,7 +10,9 @@ DeepSeek Harness 的设备鉴权移动网关，支持会话与实时事件、排
 >
 > 实时流已改为独立 `assistant-stream` 帧，移动端需要按 [rc.2 接入说明](docs/dsh-rc2-mobile-integration.md) 更新订阅、缓存与分页处理。当前修改尚未发布。
 >
-> v0.11.1（当前源码，尚未发布）：新增普通文件分块上传，支持 SHA-256 校验、进度确认、取消与断线清理，复用 DSH 官方附件存储和会话专属凭证，支持文件随消息发送及实时和历史文件引用。App 需按 `file-upload-v1` 能力接入，详见 [移动端普通文件上传对接指南](docs/file-upload-app-integration.md)。
+> v0.12.0（当前源码，尚未发布）：新增工作区重命名与删除，代理宿主 `workspace/rename` 与 `workspace/delete`，回包 `workspace-renamed` / `workspace-deleted`，对齐 DSH 官方桌面端的工作区菜单；App 需按 `workspace-manage-v1` 能力接入，宿主 Remote 方法需 DSH 0.2.1-rc.3 及以上。
+>
+> v0.11.1：新增普通文件分块上传，支持 SHA-256 校验、进度确认、取消与断线清理，复用 DSH 官方附件存储和会话专属凭证，支持文件随消息发送及实时和历史文件引用。App 需按 `file-upload-v1` 能力接入，详见 [移动端普通文件上传对接指南](docs/file-upload-app-integration.md)。
 >
 > v0.11.0：新增智能体团队与子会话协议，支持团队成员、共享任务看板、多层子智能体目录和运行状态实时同步，以及子智能体独立历史、视图切换、继续对话、图片输入与停止执行。APP 需按能力发现接入，详见 [智能体团队 APP 详细接入指南](docs/agent-team-app-integration.md)。
 >
