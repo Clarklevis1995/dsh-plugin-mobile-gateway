@@ -315,7 +315,7 @@ Agent 调用 DSH 的 `ask_user_question` 工具时，插件接入 Host 的
   "outcome":"answered" }
 ```
 
-`outcome` 为 `answered` 或 `cancelled`。存在匹配 Session 的移动连接时，移动网关优先认领请求，多台移动设备中的第一个合法响应获胜；若没有匹配连接或连接全部断开，则通过 `next()` 回退给 WebUI/后续 Host answerer。所有移动连接都会收到由移动端完成的最终状态并应关闭对应选择界面。重连时网关会重放仍由它持有的问题；DSH 进程重启则会取消这些仅存在于运行时的问题。
+`outcome` 为 `answered` 或 `cancelled`。网关启用时会登记待答提问，并同时保留 WebUI/后续 Host answerer；多台移动设备与 WebUI 中的第一个合法响应获胜。实时广播仍按订阅 Session 过滤，后台会话的提问会在设备首次连接或之后打开对应 Session 时以 `replay:true` 重放。若没有可用移动连接和后续 answerer，则保持原有回退行为，不挂住工具调用。所有移动连接都会收到由移动端完成的最终状态并应关闭对应选择界面；DSH 进程重启则会取消这些仅存在于运行时的问题。
 
 ---
 
