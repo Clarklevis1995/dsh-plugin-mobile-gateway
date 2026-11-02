@@ -329,6 +329,10 @@ npm test
 
 ## 官方语音输入
 
+### Optional platform attachment ingress
+
+When `platformAuth` is enabled, native uploads keep the existing official attachment reference and require the shared `platformFileIngress.ready === true` service. The common admitted-step ingress stages the verified bytes in the actual execution realm for Desktop, mobile and other native clients. This gateway does not create a duplicate VM artifact or return a parallel `executorPath` field. Session write permission is checked before native upload admission.
+
 网关已接入 DSH 0.2.0-rc.2 官方实验性语音输入插件。移动端可以查询识别器、订阅模型准备进度、准备模型、设置识别偏好，以及提交录音取得文字。取消和断线会中止转写，结果不会自动发送给 Agent。
 
 1. 在 DSH 插件管理中启用“语音输入”（`@deepseek-ai/dsh-experimental-voice-input-bundle`），下载并准备模型。
