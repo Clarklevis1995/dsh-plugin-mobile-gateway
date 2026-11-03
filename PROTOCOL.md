@@ -1,4 +1,4 @@
-# dsh Mobile Gateway — WebSocket 协议参考
+# dsh Mobile Gateway — 移动业务与传输协议参考
 
 移动端通过经过设备鉴权的 WebSocket 连接与 dsh 通信：订阅 agent 实时输出、发送文字和图片、处理 Human-in-the-loop 提问与操作审批、查询会话/工作区/历史、调整会话配置。本协议由持久化插件 `dsh-plugin-mobile-gateway` 实现。当前源码适配 DSH 0.2.1-rc.2 / Session format 4；移动端实时流接入见 [rc.2 接入说明](docs/dsh-rc2-mobile-integration.md)，插件管理见 [RC2 插件管理对接方案](docs/dsh-0.2.0-rc.2-plugin-management-mobile-integration.md)。
 
@@ -9,6 +9,8 @@ DSH Remote 要求的 `peer` 由网关在 Host 内部创建并注入，身份沿�
 - **公网端点**：必须由 TLS 反向代理提供 `wss://<域名>/ws/mobile`
 - **帧格式**：全部为 JSON 文本帧（UTF-8）；图片字节及语音 WAV 使用标准 Base64
 - **连接即推送**：连上后服务端立刻发送一条 `hello`，之后 agent 输出以 `event` 帧实时推送
+
+实验传输扩展：`webrtc-upgrade-v1` 复用鉴权 WebSocket 作为 bootstrap，两个独立 PC 分别承载 control/conversation，显式整组提交后才接入下文业务。WebSocket 继续 JSON 文本；RTC 使用 MGW1 有界二进制分片。实验默认关闭；原有协议和配对不变。完整信令、票据、安全、回退、分片头和 App 状态机以 [WebRTC 接入契约](docs/webrtc-app-integration.md) 为准；共享字节向量见 [transport-v1 fixtures](test/fixtures/transport-v1/frames.json)。网关可联调，App 待接入。
 
 ---
 

@@ -1,3 +1,4 @@
+import { mock } from 'node:test'
 import { createTestConnection } from './helpers/peer.mjs'
 import { createRequire } from 'node:module'
 
@@ -135,6 +136,44 @@ async function waitForLanStatus(base) {
   const lanUrl = status.lan.urls[0]
   assert.equal(lanUrl, `ws://127.0.0.1:${status.lan.port}/ws/mobile`)
 
+  // 只在测试中覆盖真实 TCP socket 的只读来源属性，无需给主机添加 Tailscale 网卡。
+  // 生产代码仍只读取 req.socket.remoteAddress，不能被代理头绕过。
+  let sourceOverride
+  const originalEmit = http.Server.prototype.emit
+  const mockedEmit = mock.method(http.Server.prototype, 'emit', function(event, ...args) {
+    if (event === 'upgrade' && this.address()?.port === status.lan.port && sourceOverride) {
+      Object.defineProperty(args[1], 'remoteAddress', { value: sourceOverride, configurable: true })
+    }
+    return Reflect.apply(originalEmit, this, [event, ...args])
+  })
+  for (const source of ['100.64.0.0', '100.100.10.20', '100.127.255.255', '::ffff:100.100.10.20', 'fd7a:115c:a1e0::1']) {
+    sourceOverride = source
+    // 即使主监听器关闭鉴权，Tailscale 来源的 LAN 连接也必须经过设备鉴权。
+    assert.equal(await expectRejected(lanUrl), 401, source)
+  }
+  for (const source of ['100.63.255.255', '100.128.0.0', '203.0.113.1', '::ffff:203.0.113.1']) {
+    sourceOverride = source
+    assert.equal(await expectRejected(lanUrl, { headers: { 'X-Forwarded-For': '100.100.10.20' } }), 403, source)
+  }
+  sourceOverride = undefined
+
+  for (const endpoint of ['ws://100.64.0.0:3081/ws/mobile', 'ws://100.127.255.255:3081/ws/mobile', 'ws://[fd7a:115c:a1e0::1]:3081/ws/mobile']) {
+    const response = await fetch(`${base}/mgw/pair`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base },
+      body: JSON.stringify({ name: 'Tailscale endpoint', publicUrl: endpoint }),
+    })
+    assert.equal(response.status, 201, endpoint)
+    assert.equal((await response.json()).payload.publicUrl, endpoint)
+  }
+  for (const host of ['100.63.255.255', '100.128.0.0', '203.0.113.1']) {
+    const response = await fetch(`${base}/mgw/pair`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base },
+      body: JSON.stringify({ publicUrl: `ws://${host}:3081/ws/mobile` }),
+    })
+    assert.equal(response.status, 400, host)
+    await response.arrayBuffer()
+  }
+
   // Main loopback listener follows the debug switch, but LAN never does.
   assert.equal(await expectRejected(lanUrl), 401)
 
@@ -154,6 +193,7 @@ async function waitForLanStatus(base) {
   assert.deepEqual(status.endpoints, [lanUrl])
 
   const deviceId = '7bb30e78-4a31-4478-aae1-00a41d280637'
+  sourceOverride = '::ffff:100.100.10.20'
   const ws = new WebSocket(
     lanUrl,
     ['dsh-mobile-v1', `dsh-pair.${pair.payload.pairingCode}`],
@@ -169,6 +209,8 @@ async function waitForLanStatus(base) {
   assert.equal(typeof paired.token, 'string')
   assert.equal(paired.gatewayId, status.gatewayId)
   assert.equal(hello.gatewayId, status.gatewayId)
+  sourceOverride = undefined
+  mockedEmit.mock.restore()
 
   // A token paired through LAN identifies the same gateway on the host listener.
   const main = new WebSocket(`ws://127.0.0.1:${webServer.port}/ws/mobile`, {

@@ -8,6 +8,9 @@
 
 # dsh-plugin-mobile-gateway
 
+> Current source adds experimental **P2P-first** transport. With `webrtc.enabled: true`, compatible clients negotiate two WebRTC DataChannels over the existing authenticated WebSocket and fall back as a group to WebSocket. First use defaults to LAN direct over WebSocket on the same Wi-Fi. Opt into a P2P or other connection plan under Connection & Pairing; saved choices are preserved. Existing clients are unchanged. **Gateway ready for integration; Android/iOS integration and device acceptance are pending. Not released.** See the [client contract](docs/webrtc-app-integration.md), [runtime decision](docs/webrtc-runtime-decision.md), and [acceptance record](docs/webrtc-acceptance.md).
+
+
 A third-party mobile gateway for DeepSeek Harness with device authentication. Supports sessions and live events; queued-message synchronization, editing, deletion, and Steer; bidirectional session archiving and renaming; stopping and resuming generation; task lists and the current Goal; server-driven command and skill menus; human-in-the-loop workflows; and image and file transfers. After installation, a Mobile Devices entry appears in the Harness WebUI sidebar for enabling the gateway, generating pairing QR codes, and managing trusted devices.
 
 > The current source targets **DSH 0.2.1-rc.2**, requires the Connection Peer interface, and uses Session format 4. Older history cursors require a fresh baseline.
@@ -167,6 +170,8 @@ See the [acceptance report](docs/multi-gateway-phase1-acceptance.md) for tests/m
 
 ## Install the Plugin
 
+Requires Node.js 22 or newer. The RTC library is a required runtime dependency installed automatically with the plugin; no separate dependency installation is needed.
+
 Prerequisites: `dsh` CLI and `pnpm` installed, with `dsh web` working. Run `pnpm --version` to ensure the current user can find `pnpm`.
 
 For LAN use, install the plugin:
@@ -198,7 +203,7 @@ For the DSH computer and mobile device on the same mutually reachable LAN.
 1. Open Mobile Devices in WebUI.
 2. Set Gateway Mode to Persistent, or Temporary for short pairing sessions.
 3. Leave Device Authentication enabled.
-4. Choose Direct LAN under Pairing Connection Method and verify `ws://<电脑局域网 IP>:3081/ws/mobile`. Cloudflare Tunnel can remain enabled. The adjacent help icon explains available routes for this environment and suggests scenarios without changing the selection.
+4. First use defaults to Direct LAN. Verify `ws://<电脑局域网 IP>:3081/ws/mobile`. For guidance, open Connection & Pairing → Help me choose a connection, then select the phone’s network, host type and Tailscale setup. Review the recommendation and prerequisites; settings are saved only when you choose Use this recommendation. The guide stays collapsed until clicked. Manual connection settings and the pairing address remain visible, including the option to select P2P. Cloudflare Tunnel can remain enabled.
 5. Enter a device name and select Generate Pairing QR Code.
 6. Open device authentication in the mobile client and scan the QR code.
 7. Pairing is complete when the trusted device shows Online in WebUI.
@@ -256,7 +261,7 @@ http://127.0.0.1:<本地端口>
 Open Mobile Devices, enter the cloud console's public IPv4 in Public Access, and choose Configure Public Access or Update Public Configuration. The Helper detects the current `dsh web` port and configures Nginx, TLS certificates, and `wss://<公网 IP>/ws/mobile`.
 
 <p align="center">
-  <img src="docs/assets/public-access-ui.png" alt="Configure public access in the Mobile Devices panel" width="420">
+  <img src="docs/assets/public-access-ui.jpg" alt="Configure public access in the Mobile Devices panel" width="960">
 </p>
 
 ### 5. Pair the Mobile Device
@@ -276,7 +281,7 @@ Start `dsh web` first. The computer must stay awake, online, and running DSH; sl
 
 ### Cloudflare Quick Tunnel (Temporary Access)
 
-The default is Automatic · Prefer LAN. For remote access, change Pairing Connection Method under Mobile Devices → Connection & Pairing to Automatic · Prefer Public or Cloudflare Public. A pink setup hint appears if the public route is not ready. Under Cloudflare Tunnel choose Quick Tunnel · No Domain and enable it. First use downloads `cloudflared`; once connected, the generated `wss://<名称>.trycloudflare.com/ws/mobile` becomes the pairing address. For LAN use, select Automatic · Prefer LAN or Direct LAN; the Tunnel may stay on. Generate a QR code and scan it in the app. Switching off stops the Tunnel. Restarting DSH restores an enabled Quick mode with a **new random address**.
+New installations default to LAN direct on the same Wi-Fi. If the LAN entry is unavailable, the panel waits for a LAN address instead of silently selecting a public entry. P2P is an explicit opt-in. P2P still needs a reachable entry for pairing and negotiation. Cloudflare STUN discovers public addresses and ports automatically by default. Override the pairing address and STUN servers in the UI if needed; failed direct connections fall back to WebSocket at that entry. Choices, addresses and STUN settings persist and apply to new connections, preserving existing connections and explicit disabled startup settings. For remote access, change Pairing Connection Method under Mobile Devices → Connection & Pairing to Automatic · Prefer Public or Cloudflare Public. A pink setup hint appears if the public route is not ready. Under Cloudflare Tunnel choose Quick Tunnel · No Domain and enable it. First use downloads `cloudflared`; once connected, the generated `wss://<名称>.trycloudflare.com/ws/mobile` becomes the pairing address. For LAN use, select Automatic · Prefer LAN or Direct LAN; the Tunnel may stay on. Generate a QR code and scan it in the app. Switching off stops the Tunnel. Restarting DSH restores an enabled Quick mode with a **new random address**.
 
 Quick Tunnel needs no Cloudflare account, Token, or domain, but its address may change after DSH restarts or tunnel reconnection. The app trusts only confirmed addresses: generate a new QR code and scan again after changes. **An online computer does not guarantee the old URL still works.** Cloudflare positions Quick Tunnel for testing/development, with concurrency limits and no availability guarantee. See the [Quick Tunnel documentation](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/trycloudflare/).
 
@@ -297,6 +302,16 @@ Both Cloudflare routes accept only `/ws/mobile` WebSocket. Other HTTP paths, inc
 Checks use system DNS and HTTPS WebSocket requests with strict certificate verification, no pairing/device tokens, and no redirects. Only HTTP 401 with the gateway echoing the fresh random probe marker proves the authenticated route is reachable; generic proxy/Cloudflare Access 401 responses do not count. The marker appears only in rejections without valid device credentials and grants no access. This is a local network snapshot, not proof of phone connectivity, authentication, or session sync.
 
 Local DNS failure does not prove a public record is absent: new records may encounter cached NXDOMAIN, local DNS, VPN, or proxy issues. Check the public hostname and proxied CNAME, then retry later; do not disable TLS verification. The plugin runs remotely managed Tunnels using a Tunnel Token, which does not create DNS or hostname routes. Separately authorized cloudflared CLI/API operations can create them, but are outside this check.
+
+### Direct access from an embedded Tailscale node
+
+Select the dedicated Tailscale private network option under Connection & Pairing → Connection plan. The gateway checks this host’s visible Tailscale interfaces and builds an entry using the actual LAN listener port and path. This is the gateway host’s IP, not the phone’s, and does not prove login state or phone reachability. Switching never retains a Cloudflare address. If detection fails, copy the host IP from Tailscale or run `tailscale ip -4` on the host. Enter that IP or a full `ws://` URL, save the Tailscale address, then generate a QR code. Drafts survive polling, saved choices survive restart, and Tailscale QR codes include only Tailscale IP entries.
+
+Detection does not run login/configuration commands or change the listener binding. It only sees interfaces in the gateway process’s network namespace. Containers and userspace proxy installations may require manual setup; verify that the entry and port are reachable from the tailnet.
+
+An app with embedded Tailscale support can use `ws://100.100.10.20:3081/ws/mobile`, replacing the IP with the host's Tailscale IPv4. Join the app node and host to the same tailnet, allow the TCP port in access rules and the host firewall, and bind the gateway LAN listener to a reachable interface (such as `0.0.0.0`) rather than loopback only. Enter this address in WebUI and generate a new pairing code. The IP can also be set explicitly with `lanAdvertiseHost`.
+
+Endpoint validation and LAN source checks accept `100.64.0.0/10`, IPv4-mapped sources and existing private IPv6 addresses. Device authentication remains mandatory; the LAN listener does not expose WebUI or management APIs. Forwarded headers are not trusted. Other `100.*` addresses and plaintext `.ts.net` hostnames are not automatically allowed. This route does not require Tailscale Serve; the Serve instructions below apply to devices using the system Tailscale client.
 
 ### Tailscale (For Long-Term Use)
 

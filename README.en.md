@@ -256,7 +256,7 @@ http://127.0.0.1:<本地端口>
 Open Mobile Devices, enter the cloud console's public IPv4 in Public Access, and choose Configure Public Access or Update Public Configuration. The Helper detects the current `dsh web` port and configures Nginx, TLS certificates, and `wss://<公网 IP>/ws/mobile`.
 
 <p align="center">
-  <img src="docs/assets/public-access-ui.png" alt="Configure public access in the Mobile Devices panel" width="420">
+  <img src="docs/assets/public-access-ui.jpg" alt="Configure public access in the Mobile Devices panel" width="960">
 </p>
 
 ### 5. Pair the Mobile Device

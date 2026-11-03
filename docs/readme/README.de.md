@@ -256,7 +256,7 @@ http://127.0.0.1:<本地端口>
 Unter Mobilgeräte → Öffentlicher Zugang die Cloud-IPv4 eintragen und konfigurieren/aktualisieren. Helper erkennt den `dsh web`-Port und richtet Nginx, TLS und `wss://<公网 IP>/ws/mobile` ein.
 
 <p align="center">
-  <img src="../assets/public-access-ui.png" alt="Öffentlichen Zugang im Gerätebereich konfigurieren" width="420">
+  <img src="../assets/public-access-ui.jpg" alt="Öffentlichen Zugang im Gerätebereich konfigurieren" width="960">
 </p>
 
 ### 5. Gerät koppeln

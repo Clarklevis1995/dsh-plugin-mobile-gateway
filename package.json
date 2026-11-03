@@ -1,7 +1,7 @@
 {
   "name": "dsh-plugin-mobile-gateway",
-  "version": "0.11.1",
-  "description": "DeepSeek Harness 移动网关，支持安全设备配对、实时会话同步、智能体团队与子会话、插件管理、官方语音输入，以及局域网和 Cloudflare Tunnel。0.11.1 新增普通文件分块上传，支持 SHA-256 校验、进度确认、取消与断线清理，复用 DSH 官方附件存储和会话专属凭证，支持文件随消息发送及实时和历史文件引用；提供详细 App 对接指南。",
+  "version": "0.11.2",
+  "description": "Whaleness 移动网关，连接 DeepSeek Harness 与移动设备，支持安全配对、实时会话同步、智能体团队与子会话、插件管理、官方语音输入及文件传输。0.11.2 新增连接方案向导、Tailscale 私有网络入口和网络检测，默认局域网直连，支持 Cloudflare Tunnel；优化配对与提示交互，P2P 入口暂标为建设中。",
   "main": "lib/index.mjs",
   "files": [
     "bin",
@@ -9,7 +9,8 @@
     "lib",
     "docs",
     "cordis.patch.yml",
-    "PROTOCOL.md"
+    "PROTOCOL.md",
+    "test/fixtures/transport-v1"
   ],
   "repository": {
     "type": "git",
@@ -21,12 +22,16 @@
   },
   "dependencies": {
     "@deepseek-ai/schemastery": "^3.18.1",
-    "ws": "^8.18.0",
-    "qrcode": "^1.5.4"
+    "qrcode": "^1.5.4",
+    "werift": "0.25.2",
+    "ws": "^8.18.0"
   },
   "bin": "bin/setup-ip.mjs",
   "scripts": {
-    "test": "node --test test/logging.test.mjs && node test/wire-json.test.mjs && node test/setup-ip.test.mjs && node test/host-adapter.test.mjs && node --test test/file-upload.test.mjs && node test/speech-input.test.mjs && node test/plugin-management.test.mjs && node test/session-preset.test.mjs && node test/session-follower.test.mjs && node --test test/agent-team.test.mjs && node test/session-event-details.test.mjs && node test/gateway.test.mjs && node --test test/approval-replay.test.mjs && node test/auth.test.mjs && node test/lan.test.mjs && node test/cloudflared-binary.test.mjs && node test/cloudflare-tunnel.test.mjs && node --test test/public-endpoint-check.test.mjs && node test/gateway-tools.test.mjs && node test/multi-gateway.test.mjs"
+    "test": "node --test test/network-addresses.test.mjs test/connection-choice-ui.test.cjs && node --test test/network-diagnostics.test.mjs test/network-diagnostics-ui.test.cjs && node --test test/logging.test.mjs && node test/wire-json.test.mjs && node test/setup-ip.test.mjs && node test/host-adapter.test.mjs && node --test test/file-upload.test.mjs && node test/speech-input.test.mjs && node test/plugin-management.test.mjs && node test/session-preset.test.mjs && node test/session-follower.test.mjs && node --test test/agent-team.test.mjs && node test/session-event-details.test.mjs && node test/gateway.test.mjs && node --test test/approval-replay.test.mjs && node test/auth.test.mjs && node test/lan.test.mjs && node test/cloudflared-binary.test.mjs && node test/cloudflare-tunnel.test.mjs && node --test test/public-endpoint-check.test.mjs && node test/gateway-tools.test.mjs && node test/multi-gateway.test.mjs && npm run test:webrtc",
+    "test:webrtc": "node --test test/webrtc/*.test.mjs",
+    "test:package": "node --test test/package-install.test.mjs",
+    "test:webrtc:stress": "node test/webrtc/stress.mjs"
   },
   "exports": {
     ".": "./lib/index.mjs",
@@ -46,5 +51,12 @@
       ]
     }
   },
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "react": "18.3.1",
+    "react-test-renderer": "18.3.1"
+  },
+  "engines": {
+    "node": ">=22"
+  }
 }

@@ -256,7 +256,7 @@ http://127.0.0.1:<本地端口>
 모바일 기기의 공개 접속에 IPv4를 넣고 설정·갱신합니다. Helper가 `dsh web` 포트를 읽어 Nginx·TLS·`wss://<公网 IP>/ws/mobile`을 설정합니다.
 
 <p align="center">
-  <img src="../assets/public-access-ui.png" alt="기기 패널에서 공개 접속 설정" width="420">
+  <img src="../assets/public-access-ui.jpg" alt="기기 패널에서 공개 접속 설정" width="960">
 </p>
 
 ### 5. 기기 페어링

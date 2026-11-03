@@ -256,7 +256,7 @@ http://127.0.0.1:<本地端口>
 Dans Appareils mobiles → Accès public, entrez l’IPv4 du fournisseur puis configurez/actualisez. Le Helper détecte le port `dsh web` et configure Nginx, TLS et `wss://<公网 IP>/ws/mobile`.
 
 <p align="center">
-  <img src="../assets/public-access-ui.png" alt="Configuration de l’accès public dans le panneau" width="420">
+  <img src="../assets/public-access-ui.jpg" alt="Configuration de l’accès public dans le panneau" width="960">
 </p>
 
 ### 5. Appairer

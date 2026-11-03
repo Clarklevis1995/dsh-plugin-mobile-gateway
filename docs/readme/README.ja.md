@@ -256,7 +256,7 @@ http://127.0.0.1:<本地端口>
 モバイル端末の公開接続に IPv4 を入れて設定・更新します。Helper は `dsh web` の実ポートを検出し Nginx・TLS・`wss://<公网 IP>/ws/mobile` を設定します。
 
 <p align="center">
-  <img src="../assets/public-access-ui.png" alt="端末パネルで公開入口を設定" width="420">
+  <img src="../assets/public-access-ui.jpg" alt="端末パネルで公開入口を設定" width="960">
 </p>
 
 ### 5. 端末をペアリング

@@ -8,6 +8,9 @@
 
 # dsh-plugin-mobile-gateway
 
+> 当前源码增加实验性 **P2P 优先** 传输：开启 `webrtc.enabled` 后，支持该能力的新客户端通过现有鉴权 WebSocket 协商双 WebRTC DataChannel，准备失败整组回退 WebSocket。首次使用默认“局域网直连”，通过同一 Wi-Fi 下的主机地址使用 WebSocket；可在“连接与配对 → 连接方案”主动选择“公网入口 + 优先 P2P（实验）”或其他方案，已保存的选择会保留；旧客户端保持原行为。**网关可联调，Android/iOS App 待接入，尚未发布**。详见 [App 接入契约](docs/webrtc-app-integration.md)、[运行库决策](docs/webrtc-runtime-decision.md) 和 [验收记录](docs/webrtc-acceptance.md)。
+
+
 DeepSeek Harness 的第三方设备鉴权移动网关，支持会话与实时事件、排队消息同步及编辑/删除/Steer、Session 归档和重命名的双向同步、停止当前生成并稍后继续、任务列表和当前 Goal 同步及管理、服务端驱动的命令和技能菜单、Human-in-the-loop、图片及文件传输。安装后，Harness WebUI 左侧边栏会出现“移动设备”入口，可直接开启网关、生成配对二维码和管理可信设备。
 
 > 当前源码以 **DSH 0.2.1-rc.2** 为适配基线，需要 Connection Peer 接口，使用 Session format 4；旧版历史游标需重新取得基线。
@@ -167,7 +170,9 @@ endpoints:
 
 ## 安装插件
 
-前提：已经安装 `dsh` CLI 和 `pnpm`，并能正常启动 `dsh web`。可先执行 `pnpm --version` 确认当前用户的环境能够找到 `pnpm`。
+前提：Node.js 22 及以上，已经安装 `dsh` CLI 和 `pnpm`，并能正常启动 `dsh web`。可先执行 `pnpm --version` 确认当前用户的环境能够找到 `pnpm`。
+
+RTC 库是插件的正式运行时依赖，由安装流程自动安装，不需要用户单独执行 npm 安装命令。
 
 局域网使用只需安装插件：
 
@@ -198,7 +203,7 @@ dsh web
 1. 打开 WebUI 的“移动设备”。
 2. 将“网关运行模式”设为“常驻开启”（短期配对也可选“临时开启”）。
 3. 保持“设备鉴权”开启。
-4. 在“配对连接方式”选择“局域网直连”，确认 WebSocket 地址为 `ws://<电脑局域网 IP>:3081/ws/mobile`。即使 Cloudflare Tunnel 已开启，也无需关闭它。选择框旁的问号会按当前网关环境解释各入口并给出场景建议，不会自动更改选择。
+4. 首次使用默认“局域网直连”，确认地址为 `ws://<电脑局域网 IP>:3081/ws/mobile`。不确定如何选择时，打开“连接与配对 → 帮我选择合适的连接方式”，依次选择手机网络、主机类型和 Tailscale 使用情况，查看推荐原因与配置前提；只有点击“使用推荐方案”才保存。推荐入口默认收起，点击后才显示选择卡片；连接方案、配对地址等手动设置始终显示，也可直接选择 P2P。即使 Cloudflare Tunnel 已开启，也无需关闭它。
 5. 填写设备名称并点击“生成配对二维码”。
 6. 在移动客户端打开设备认证并扫描二维码。
 7. WebUI 的可信设备显示“在线”后即完成。
@@ -256,7 +261,7 @@ http://127.0.0.1:<本地端口>
 打开左侧的“移动设备”，在“公网接入”填写云厂商控制台提供的公网 IPv4，然后点击“配置公网接入”或“更新公网配置”。Helper 会自动读取当前 `dsh web` 端口并配置 Nginx、TLS 证书和 `wss://<公网 IP>/ws/mobile`。
 
 <p align="center">
-  <img src="docs/assets/public-access-ui.png" alt="在移动设备面板配置公网接入" width="420">
+  <img src="docs/assets/public-access-ui.jpg" alt="在移动设备面板配置公网接入" width="960">
 </p>
 
 ### 5. 配对移动设备
@@ -276,7 +281,7 @@ http://127.0.0.1:<本地端口>
 
 ### Cloudflare Quick Tunnel（一键临时接入）
 
-面板默认使用「自动选择 · 优先内网直连」。需要外网连接时，在「移动设备 → 连接与配对」将「配对连接方式」改为「自动选择 · 优先外网」或「Cloudflare 外网」；外网入口尚未就绪时，配对区域下方会显示粉红色配置引导。在下方 Cloudflare Tunnel 配置中选择「Quick Tunnel · 无需域名」，点击「一键开启 Quick Tunnel」。面板会在首次运行时下载 `cloudflared`，连接后显示随机的 `wss://<名称>.trycloudflare.com/ws/mobile`，并自动将其填为配对地址。需要在局域网内直连时，将“配对连接方式”改回“自动选择 · 优先内网直连”或“局域网直连”；Tunnel 可以继续开启。生成二维码，用手机 App 扫码即可。关闭开关会停止隧道；DSH 再次启动时会恢复已开启的 Quick 模式并取得**新的随机地址**。
+首次使用默认选择「局域网直连」，使用同一 Wi-Fi 下的主机内网地址；局域网入口不可用时会提示等待地址，不自动切换到公网。需要 P2P 时，可主动选择「公网入口 + 优先 P2P（实验）」。P2P 仍需可达地址完成配对和协商，默认使用 Cloudflare STUN 自动发现公网地址与端口，无需手填；可在界面覆盖配对地址及 STUN 服务；无法直连时回退该地址的 WebSocket。选择、地址和 STUN 设置均会保存，新连接生效，已有连接保留；显式关闭的配置仍受尊重。需要外网连接时，在「移动设备 → 连接与配对」将「配对连接方式」改为「自动选择 · 优先外网」或「Cloudflare 外网」；外网入口尚未就绪时，配对区域下方会显示粉红色配置引导。在下方 Cloudflare Tunnel 配置中选择「Quick Tunnel · 无需域名」，点击「一键开启 Quick Tunnel」。面板会在首次运行时下载 `cloudflared`，连接后显示随机的 `wss://<名称>.trycloudflare.com/ws/mobile`，并自动将其填为配对地址。需要在局域网内直连时，将“配对连接方式”改回“自动选择 · 优先内网直连”或“局域网直连”；Tunnel 可以继续开启。生成二维码，用手机 App 扫码即可。关闭开关会停止隧道；DSH 再次启动时会恢复已开启的 Quick 模式并取得**新的随机地址**。
 
 Quick Tunnel 无需 Cloudflare 账户、Token 或自己的公网域名，但地址在 DSH 重启或隧道重连后可能变化。手机 App 只信任已确认的地址，因此地址变化后需在面板重新生成二维码并扫码更新配对；**仅凭 PC 在线不能保证旧地址继续可用**。Cloudflare 将 Quick Tunnel 定位于测试和开发，当前有并发请求上限且不提供可用性保证。参见 [Cloudflare Quick Tunnel 文档](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/trycloudflare/)。
 
@@ -297,6 +302,16 @@ Quick Tunnel 无需 Cloudflare 账户、Token 或自己的公网域名，但地�
 检测使用本机系统 DNS 和严格证书校验的 HTTPS WebSocket 请求，不携带配对码或设备 Token，不跟随重定向。只有 HTTP 401 且移动网关回显本次随机探测标记时，才确认受鉴权保护的网关路由可达；代理或 Cloudflare Access 的普通 401 不会被当作成功。该标记只在缺少有效设备凭证的拒绝响应中回显，不授予任何访问权限。结果是一次本机网络快照，不保证手机网络、设备鉴权或会话同步成功。
 
 本机解析失败不代表公共 DNS 记录必然不存在：刚创建记录时可能仍有 NXDOMAIN 缓存，也可能受本机 DNS、VPN 或代理影响。核对公开主机名和已代理 CNAME，再稍后重试，不要关闭 TLS 校验。插件目前使用 Tunnel Token 运行远程管理的隧道，该 Token 不会自动创建域名路由或 DNS；具备额外账户授权的 cloudflared CLI / Cloudflare API 可以配置这些资源，但不属于本检测功能。
+
+### App 内嵌 Tailscale 节点直连
+
+在“连接与配对 → 连接方案”选择独立的“Tailscale 私有网络”。网关会检测当前进程所在主机的 Tailscale 网卡，读取可用私有 IP 并拼接实际局域网监听端口及路径；这不是手机的 IP，也不代表已经验证登录状态或手机可达性。切换方案不会保留 Cloudflare 地址。检测不到时，可复制主机 Tailscale 应用中的 IP，或在主机运行 `tailscale ip -4`，直接填写 IP 或完整 `ws://` 地址，点击“保存 Tailscale 地址”后生成二维码。填写中的内容不会被轮询刷新覆盖，选择及地址会跨重启保存；该方案的二维码仅包含 Tailscale IP 入口。
+
+自动检测不执行 Tailscale 登录或配置命令，也不修改网关监听地址。仅支持当前网络命名空间中可见的 Tailscale 网卡；容器、用户态代理等模式可能无法自动检测或直接访问，需手动确认入口和端口可从 tailnet 访问。
+
+支持内嵌 Tailscale 的 App 可使用 `ws://100.100.10.20:3081/ws/mobile`（替换成主机的 Tailscale IPv4）。App 节点和主机需加入同一 tailnet，访问规则及主机防火墙需允许对应 TCP 端口，网关 LAN 监听器需绑定可达的接口（例如 `0.0.0.0`），而不是仅绑定回环。WebUI 中填写该地址后重新生成配对码；如使用 `lanAdvertiseHost`，也可显式填写这个 IP。
+
+地址校验和 LAN 来源检查支持 `100.64.0.0/10`、IPv4 映射来源及原有私网 IPv6。仍强制设备鉴权，LAN 入口不提供 WebUI 或管理 API；不会信任 `X-Forwarded-For`，也不会允许整个 `100.*` 地址段或按 `.ts.net` 域名后缀放宽明文校验。此方式不需要 Tailscale Serve；下面的 Serve 方案适用于使用系统 Tailscale 客户端的场景。
 
 ### Tailscale（推荐长期使用）
 

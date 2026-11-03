@@ -12,7 +12,7 @@
 
 > **把手机变成远端 Agent 的第二块屏幕**——实时看到思考、工具调用和回答，随时下发新任务。
 
-![移动设备管理面板](assets/mobile-device-management.png)
+![移动设备管理面板](assets/mobile-device-management.jpg)
 
 它的定位很轻：**不重新实现任何 Agent 逻辑**，只是把 DSH 浏览器 UI 用的那套官方 Host API 和 `session/event` 事件流，转译成一套精简的 JSON WebSocket 协议转发给手机。
 
