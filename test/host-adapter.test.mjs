@@ -78,6 +78,9 @@ const gateway = {
 }
 
 const host = createDshHostAdapter(gateway, peer)
+assert.equal(host.dshVersion, undefined)
+assert.equal((await host.describeHost()).dshVersion, undefined)
+calls.length = 0
 assert.throws(() => createDshHostAdapter(gateway), /requires a DSH Connection Peer/)
 
 // 官方流式路由走 Connection 注册表与固定 Peer，不发送真实 HTTP 请求。

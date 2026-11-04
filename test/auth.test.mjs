@@ -314,6 +314,7 @@ function expectRejected(url, options = {}) {
     'projection-baseline',
     'turn-outline-v1',
     'images',
+    'tool-result-images-v1',
     'session-create',
     'session-agent-preset',
     'agent-team-v1',

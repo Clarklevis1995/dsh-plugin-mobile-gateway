@@ -270,7 +270,7 @@ function fakeApi() {
           { type: 'assistant/chunk', seq: 2, time: 2, data: { turn: 1, step: 0, chunk: { type: 'text-delta', text: 'a' } } },
           { type: 'assistant/message', seq: 3, time: 3, data: { turn: 1, step: 0, message: { content: [{ type: 'text', text: 'hello' }] } } },
           { type: 'tool/call', seq: 4, time: 4, data: { turn: 1, step: 0, callId: 'c1', name: 'bash', arguments: '{}' } },
-          { type: 'tool/result', seq: 5, time: 5, data: { turn: 1, step: 0, message: { role: 'tool', source: { kind: 'tool', callId: 'c1' }, toolCallId: 'c1', content: [{ type: 'text', text: 'x'.repeat(5000) }] } } },
+          { type: 'tool/result', seq: 5, time: 5, data: { turn: 1, step: 0, message: { role: 'tool', source: { kind: 'tool', callId: 'c1' }, toolCallId: 'c1', content: [{ type: 'text', text: 'x'.repeat(5000) }, { type: 'image', attachment: imageAttachment }] } } },
           { type: 'request/header', seq: 6, time: 6, data: { header: { system: 'sys'.repeat(2000) }, reason: 'initial' } },
           { type: 'assistant/message', seq: 7, time: 7, data: { turn: 1, step: 1, message: { content: [{ type: 'text', text: 'done' }] } } },
         ]
@@ -526,6 +526,22 @@ function waitFor(pred, timeout) { return new Promise((res) => { const t0 = Date.
   assert.ok(got.find(frame => frame.kind === 'hello').capabilities.includes('file-references-v1'))
   interactionResults.push(['live delivery keeps paths and descriptions', true])
 
+  const generatedRef = { attachmentId: 'generated-image', mediaType: 'image/png', bytes: 8, width: 1024, height: 768 }
+  const generatedBlock = { type: 'image', attachment: generatedRef }
+  for (const [index, type] of ['tool/result', 'tool/ptc-dispatch', 'tool/code-dispatch'].entries()) {
+    const seq = 9010 + index
+    listeners['session/event']({ id: 's1' }, { type, seq, time: 7, data: {
+      turn: 1, parentCallId: 'run-code', subCallId: 'generate-1', name: 'generate_image',
+      ...(type === 'tool/result' ? { message: { toolCallId: 'generate-1', content: [generatedBlock] } }
+        : { content: [generatedBlock] }),
+    } })
+    assert.equal(await waitFor(() => got.some(frame => frame.seq === seq), 2000), true)
+    assert.deepEqual(got.find(frame => frame.seq === seq).event.images, [generatedRef])
+    if (type !== 'tool/result') assert.equal(got.find(frame => frame.seq === seq).event.parentCallId, 'run-code')
+  }
+  assert.ok(got.find(frame => frame.kind === 'hello').capabilities.includes('tool-result-images-v1'))
+  interactionResults.push(['live generated tool images and subcalls', true])
+
   // Auxiliary queries must report the real failure with their own request identity.
   for (const type of ['permission-options', 'context-usage', 'session-stats']) {
     const firstResponse = got.length
@@ -694,7 +710,8 @@ function waitFor(pred, timeout) { return new Promise((res) => { const t0 = Date.
       assert.equal(conversations.some(f => f.kind === 'turn-outline-updated'), false)
       ws.send(JSON.stringify({ type: 'unsubscribe' }))
       assert.equal(await waitFor(() => got.some(f => f.kind === 'subscribed' && f.sessionId === null), 2000), true)
-      assert.equal(controls.find(f => f.kind === 'hello').dshVersion, '0.2.1-rc.2')
+      // 测试入口不属于 DSH 安装，不能上报虚构的适配基线版本。
+      assert.equal(controls.find(f => f.kind === 'hello').dshVersion, undefined)
       control.send(JSON.stringify({ type: 'plugin-catalog', requestId: 'unauthenticated-catalog' }))
       assert.equal(await waitFor(() => controls.some(f => f.requestId === 'unauthenticated-catalog'), 2000), true)
       assert.equal(controls.find(f => f.requestId === 'unauthenticated-catalog').code, 'authentication-required')
@@ -1155,7 +1172,7 @@ function waitFor(pred, timeout) { return new Promise((res) => { const t0 = Date.
     ['attachment bytes', { type: 'attachment', sessionId: 's1', attachmentId: 'att-image-1' }, (m) => m.kind === 'attachment' && m.sessionId === 's1' && m.attachment.mediaType === 'image/png' && m.data === 'iVBORw0KGgo='],
     ['attachment missing id', { type: 'attachment', sessionId: 's1' }, (m) => m.kind === 'error' && m.code === 'bad-request'],
     ['history byte-capped', { type: 'history', sessionId: 's1', maxBytes: 300 }, (m) => m.kind === 'history' && m.bytes <= 350 && m.hasMore === true && typeof m.nextBeforeSeq === 'number' && m.events.length >= 1 && m.events[0].seq === m.nextBeforeSeq],
-    ['history conversation trim', { type: 'history', sessionId: 's1', view: 'conversation', maxBytes: 200000 }, (m) => m.kind === 'history' && m.view === 'conversation' && !m.events.some((e) => e.type === 'assistant/chunk' || e.type === 'request/header') && m.events.some((e) => e.type === 'tool/result') && (() => { const tr = m.events.find((e) => e.type === 'tool/result'); const txt = tr.data.message.content[0].text; return txt.length <= 2001; })() && m.hasMore === false && m.nextBeforeSeq === undefined],
+    ['history conversation trim', { type: 'history', sessionId: 's1', view: 'conversation', maxBytes: 200000 }, (m) => m.kind === 'history' && m.view === 'conversation' && !m.events.some((e) => e.type === 'assistant/chunk' || e.type === 'request/header') && m.events.some((e) => e.type === 'tool/result') && (() => { const tr = m.events.find((e) => e.type === 'tool/result'); const txt = tr.data.message.content[0].text; return txt.length <= 2001 && tr.data.images[0].attachmentId === 'att-image-1'; })() && m.hasMore === false && m.nextBeforeSeq === undefined],
     ['search', { type: 'search', query: 'q' }, (m) => m.kind === 'search'],
     ['host', { type: 'host' }, (m) => m.kind === 'host'],
     ['directories', { type: 'directories', path: '/tmp' }, (m) => m.kind === 'directories'],

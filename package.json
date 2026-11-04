@@ -1,7 +1,7 @@
 {
   "name": "dsh-plugin-mobile-gateway",
-  "version": "0.11.2",
-  "description": "Whaleness 移动网关，连接 DeepSeek Harness 与移动设备，支持安全配对、实时会话同步、智能体团队与子会话、插件管理、官方语音输入及文件传输。0.11.2 新增连接方案向导、Tailscale 私有网络入口和网络检测，默认局域网直连，支持 Cloudflare Tunnel；优化配对与提示交互，P2P 入口暂标为建设中。",
+  "version": "0.11.3",
+  "description": "Whaleness 移动网关，连接 DeepSeek Harness 与移动设备，支持安全配对、实时会话同步、智能体团队与子会话、插件管理、官方语音输入及文件传输，提供局域网、Tailscale 和 Cloudflare Tunnel 连接。0.11.3 新增生图插件图片转发与历史图片恢复，支持普通工具及 run_code 生图结果，配合移动端适配展示生成图片。",
   "main": "lib/index.mjs",
   "files": [
     "bin",
@@ -28,7 +28,7 @@
   },
   "bin": "bin/setup-ip.mjs",
   "scripts": {
-    "test": "node --test test/network-addresses.test.mjs test/connection-choice-ui.test.cjs && node --test test/network-diagnostics.test.mjs test/network-diagnostics-ui.test.cjs && node --test test/logging.test.mjs && node test/wire-json.test.mjs && node test/setup-ip.test.mjs && node test/host-adapter.test.mjs && node --test test/file-upload.test.mjs && node test/speech-input.test.mjs && node test/plugin-management.test.mjs && node test/session-preset.test.mjs && node test/session-follower.test.mjs && node --test test/agent-team.test.mjs && node test/session-event-details.test.mjs && node test/gateway.test.mjs && node --test test/approval-replay.test.mjs && node --test test/question-replay.test.mjs && node test/auth.test.mjs && node test/lan.test.mjs && node test/cloudflared-binary.test.mjs && node test/cloudflare-tunnel.test.mjs && node --test test/public-endpoint-check.test.mjs && node test/gateway-tools.test.mjs && node test/multi-gateway.test.mjs && npm run test:webrtc",
+    "test": "node --test test/tool-images.test.mjs test/dsh-runtime-version.test.mjs && node --test test/network-addresses.test.mjs test/connection-choice-ui.test.cjs && node --test test/network-diagnostics.test.mjs test/network-diagnostics-ui.test.cjs && node --test test/logging.test.mjs && node test/wire-json.test.mjs && node test/setup-ip.test.mjs && node test/host-adapter.test.mjs && node --test test/file-upload.test.mjs && node test/speech-input.test.mjs && node test/plugin-management.test.mjs && node test/session-preset.test.mjs && node test/session-follower.test.mjs && node --test test/agent-team.test.mjs && node test/session-event-details.test.mjs && node test/gateway.test.mjs && node --test test/approval-replay.test.mjs && node --test test/question-replay.test.mjs && node test/auth.test.mjs && node test/lan.test.mjs && node test/cloudflared-binary.test.mjs && node test/cloudflare-tunnel.test.mjs && node --test test/public-endpoint-check.test.mjs && node test/gateway-tools.test.mjs && node test/multi-gateway.test.mjs && npm run test:webrtc",
     "test:webrtc": "node --test test/webrtc/*.test.mjs",
     "test:package": "node --test test/package-install.test.mjs",
     "test:webrtc:stress": "node test/webrtc/stress.mjs"

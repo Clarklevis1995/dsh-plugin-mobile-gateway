@@ -1481,3 +1481,18 @@ history. Older gateways without the capability continue using one connection.
 - 子会话父子关系由 Host 校验，非法关系返回 `subagent/unauthorized` 等错误；无法继续的模式返回 `subagent/not-resumable`。
 - 发送回执只表示 inbox 接受，不保证执行完成，也不提供自动重试去重保证。断线无回执应核对历史/队列，不能盲目重发。
 - 本次不提供直接创建成员或变更共享任务的移动 RPC；由用户在 Lead 对话中提出要求，Host 团队工具执行，APP 等待权威投影更新。
+## 工具结果图片（tool-result-images-v1）
+
+`hello.capabilities` 包含 `tool-result-images-v1` 时，实时 `tool/result`、
+`tool/ptc-dispatch`、`tool/code-dispatch` 的 `event.images` 可携带持久图片附件引用，
+结构与用户/助手消息的 `images` 相同：`attachmentId/mediaType/bytes/width/height/name?`。
+协议仍为 3，历史格式仍为 4。conversation 历史与 opening snapshot 在上述事件的
+`data.images` 中提供同一列表；原始历史可从内容块解析引用。
+
+图片通过现有控制请求 `attachment(sessionId, attachmentId)` 读取，继续由 Host 校验会话引用，
+本能力不开放本地文件路径或插件 HTTP 路由。PTC/code 事件同时保留
+`rootCallId/parentCallId/subCallId/name/arguments/isError/output/outputTruncated/error?`，
+`turn/step` 可能缺失。图片应独立于工具折叠区显示。
+
+完整约束、官方 Host 对不同内容结构的授权限制、移动端共享层及 Android/iOS 实施步骤见
+[生图插件图片接入](docs/generated-images-mobile-integration.md)。
