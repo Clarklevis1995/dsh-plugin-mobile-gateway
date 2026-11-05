@@ -7,6 +7,7 @@ import path from 'node:path'
 import os from 'node:os'
 import fsp from 'node:fs/promises'
 import { toolImages } from '../lib/tool-images.mjs'
+import { createDshHostAdapter } from '../lib/dsh-host-adapter.mjs'
 
 assert.ok(process.env.DSH_INSTALL_ROOT, 'Set DSH_INSTALL_ROOT')
 const require = createRequire(path.join(process.env.DSH_INSTALL_ROOT, 'package.json'))
@@ -27,15 +28,20 @@ try {
     const content = [{ type: 'image', attachment }]
     const event = { type, seq: 1, data: type === 'tool/result' ? { message: { content } } : { content } }
     const [image] = toolImages(event.data, type)
-    const source = { ctx: { attachments: store }, readSessionState: async sessionId => ({
-      events: sessionId === 'owner' ? [event] : [],
-    }) }
+    const api = createDshHostAdapter({
+      async invoke({ method, args }) {
+        if (method === 'events') return { records: args.request.address.sessionId === 'owner'
+          ? [{ type: 'event', event }] : [], cursor: 1, hasMore: false }
+        assert.equal(method, 'attachment')
+        return SessionCommandController.prototype.attachment.call({ ctx: { attachments: store } }, args.request)
+      },
+      async *stream() {},
+    }, { signal: new AbortController().signal })
     const request = { sessionId: 'owner', attachmentId: image.attachmentId }
-    const result = await SessionCommandController.prototype.attachment.call(source, request)
+    const result = await api.sessions.attachment(request)
     assert.equal(result.attachment.attachmentId, image.attachmentId)
     assert.ok(Buffer.from(result.data, 'base64').length > 0)
-    await assert.rejects(() => SessionCommandController.prototype.attachment.call(source,
-      { ...request, sessionId: 'other' }), error => error.code === 'session/attachment-invalid')
+    await assert.rejects(() => api.sessions.attachment({ ...request, sessionId: 'other' }), error => error.code === 'session/attachment-invalid')
   }
   console.log('PASS official generated image storage, tool/PTC reads and cross-session denial')
 } finally {

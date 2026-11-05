@@ -13,7 +13,9 @@
 
 DeepSeek Harness 的第三方设备鉴权移动网关，支持会话与实时事件、排队消息同步及编辑/删除/Steer、Session 归档和重命名的双向同步、停止当前生成并稍后继续、任务列表和当前 Goal 同步及管理、服务端驱动的命令和技能菜单、Human-in-the-loop、图片及文件传输。安装后，Harness WebUI 左侧边栏会出现“移动设备”入口，可直接开启网关、生成配对二维码和管理可信设备。
 
-> 当前源码以 **DSH 0.2.1-rc.2** 为适配基线，需要 Connection Peer 接口，使用 Session format 4；旧版历史游标需重新取得基线。
+> 当前源码以 **DSH 0.2.2-rc.1** 为适配基线，需要 Connection Peer 接口，使用 Session format 4；旧版历史游标需重新取得基线。
+>
+> 当前未发布源码新增有序聊天引用、宿主级自动化任务和插件更新，适配批量投影与图片读取。需要 Node.js 24.9+。移动端按 [0.2.2-rc.1 详细接入说明](docs/dsh-0.2.2-rc.1-mobile-integration.md) 实施。
 >
 > 实时流已改为独立 `assistant-stream` 帧，移动端需要按 [rc.2 接入说明](docs/dsh-rc2-mobile-integration.md) 更新订阅、缓存与分页处理。当前修改尚未发布。
 >
@@ -39,7 +41,7 @@ DeepSeek Harness 的第三方设备鉴权移动网关，支持会话与实时事
 
 ## 协议与 DSH 兼容层
 
-移动端连接的是本项目维护的 `dsh-mobile-v1`，不是 DSH 的内部 Remote 协议。插件内部通过独立 Host Adapter 对接 DSH 0.2.1-rc.2 的 Remote Gateway；Session、Workspace、Settings、Commands、Goals、Schedule、Permission Presets、Plugin Manager 等 namespace 和严格参数只存在于该适配层。插件管理的请求帧及 DSH Mobile 页面方案见 [RC2 插件管理对接方案](docs/dsh-0.2.0-rc.2-plugin-management-mobile-integration.md)。
+移动端连接的是本项目维护的 `dsh-mobile-v1`，不是 DSH 的内部 Remote 协议。插件内部通过独立 Host Adapter 对接 DSH 0.2.2-rc.1 的 Remote Gateway；Session、Workspace、Settings、Commands、Goals、Schedule、Permission Presets、Plugin Manager 等 namespace 和严格参数只存在于该适配层。插件管理的请求帧及 DSH Mobile 页面方案见 [RC2 插件管理对接方案](docs/dsh-0.2.0-rc.2-plugin-management-mobile-integration.md)。
 
 DSH 0.2.1-rc.2 要求每次 Remote 调用携带 `peer`。网关通过 `ctx.connection.createPeer()` 创建一个随插件释放的本机用户 Peer，普通请求、首帧读取和实时订阅都由 Host Adapter 注入它；移动端不能设置调用方身份。问答与审批继续由网关的 Host 监听器处理。旧网关漏传此字段时会出现 `Cannot read properties of undefined (reading 'signal')`，升级 DSH 后需重新安装本源码版本并重启 `dsh web`，手机无需更改协议。
 

@@ -14,7 +14,7 @@ test('published tarball keeps RTC disabled by default and loads it on opt-in wit
   const manifest = JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf8'))
   assert.equal(manifest.dependencies.werift, '0.25.2')
   assert.equal(manifest.optionalDependencies?.werift, undefined)
-  assert.equal(manifest.engines.node, '>=22')
+  assert.equal(manifest.engines.node, '>=24.9')
   const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'mgw-package-install-'))
   const env = { ...process.env }
   delete env.NODE_PATH
@@ -23,7 +23,7 @@ test('published tarball keeps RTC disabled by default and loads it on opt-in wit
   try {
     const packed = await run('npm', ['pack', '--json', '--pack-destination', temp, '--ignore-scripts'], { cwd: root, env })
     const artifact = JSON.parse(packed.stdout)[0]
-    for (const file of ['lib/rtc-adapter.mjs', 'lib/rtc-worker-client.mjs', 'lib/rtc-worker.mjs', 'lib/transport-negotiation.mjs', 'lib/network-diagnostics.mjs']) {
+    for (const file of ['lib/rtc-adapter.mjs', 'lib/rtc-worker-client.mjs', 'lib/rtc-worker.mjs', 'lib/transport-negotiation.mjs', 'lib/network-diagnostics.mjs', 'lib/message-text.mjs', 'lib/schedule-management.mjs', 'docs/dsh-0.2.2-rc.1-mobile-integration.md']) {
       assert(artifact.files.some(entry => entry.path === file), `发布包缺少 ${file}`)
     }
     const tarball = path.join(temp, artifact.filename)

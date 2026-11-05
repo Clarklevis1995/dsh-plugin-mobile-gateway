@@ -58,7 +58,7 @@ try {
   assert.equal(completed.kind, 'file-upload-completed', JSON.stringify(completed))
   assert.equal(completed.file.attachmentId, `sha256:${sha256}`)
   assert.deepEqual(await fsp.readFile(attachments.fileHostPath(completed.file)), bytes)
-  assert.deepEqual(uploads.resolve(agents.get('s1'), completed.receiptId), completed.file)
+  assert.deepEqual(uploads.resolve(agents.get('s1'), completed.receiptId), { type: 'file', attachment: completed.file })
   assert.equal(uploads.resolve(agents.get('s2'), completed.receiptId), undefined)
   const promptContext = { ctx: { agents: agentService, attachments, fileUploads: uploads },
     resolveAgent: async id => agents.get(id) }

@@ -17,7 +17,7 @@ assert.equal(require('@deepseek-ai/dsh-api-gateway/package.json').version, DSH_V
 
 // 使用官方投影折叠生成大纲，验证预览和落定语义，并通过真实 Gateway 传输。
 let outlineDefinition
-installTurnOutline({ sessionProjections: { register(definition) { outlineDefinition = definition } } })
+await installTurnOutline({ sessionProjections: { register(definition) { outlineDefinition = definition } } })
 let outlineState = outlineDefinition.init()
 const foldOutline = event => {
   outlineState = outlineDefinition.apply(outlineState, event)

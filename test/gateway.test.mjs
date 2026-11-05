@@ -222,11 +222,13 @@ function fakeApi() {
       async catalog() { return { rpcId: 'r', result: { ok: true, value: { options: [{ value: 'ask', name: 'Ask' }, { value: 'workspace-write', name: 'Workspace Write' }], defaultOptions: [{ value: 'ask', name: 'Ask' }, { value: 'code', name: 'Code' }], defaultPreset: 'ask' } } } },
     },
     schedule: {
-      async catalog() { return { rpcId: 'r', result: { ok: true, value: { items: [{ id: 'reminder-1', sessionId: 's1', status: 'active', kind: 'every', title: '检查构建', prompt: '检查构建状态', everySeconds: 300, scheduledAt: '2099-01-01T00:00:00.000Z' }] } } } },
+      async catalog() { return { rpcId: 'r', result: { ok: true, value: { items: [{ id: 'reminder-1', sessionId: 's1', target: { kind: 'session', sessionId: 's1' }, involvedSessionIds: ['s1'], status: 'active', kind: 'every', title: '检查构建', prompt: '检查构建状态', everySeconds: 300, scheduledAt: '2099-01-01T00:00:00.000Z' }] } } } },
       async list() { return { rpcId: 'r', result: { ok: true, value: { items: [{ id: 'reminder-1', kind: 'every', title: '检查构建', prompt: '检查构建状态', everySeconds: 300, scheduledAt: '2099-01-01T00:00:00.000Z' }] } } } },
       async history() { return { rpcId: 'r', result: { ok: true, value: { id: 'reminder-1', records: [], earlierRecordsUnavailable: false, earlierRecordsPruned: false, retention: { days: 30, records: 200 } } } } },
-      async update(req) { return { rpcId: 'r', result: { ok: true, value: { id: req.payload.id, updated: true, record: { ...req.payload.expected, title: req.payload.title ?? req.payload.expected.title } } } } },
-      async delete(req) { return { rpcId: 'r', result: { ok: true, value: { id: req.payload.id, deleted: true } } } },
+      async view(req) { return { rpcId: 'r', result: { ok: true, value: { id: req.payload.id, target: { kind: 'session', sessionId: 's1' }, involvedSessionIds: ['s1'], status: 'active', kind: 'every', title: '检查构建', prompt: '检查构建状态', everySeconds: 300, scheduledAt: '2099-01-01T00:00:00.000Z' } } } },
+      async edit(req) { return { rpcId: 'r', result: { ok: true, value: req.payload.action === 'delete'
+        ? { id: req.payload.id, deleted: true }
+        : { id: req.payload.id, title: req.payload.patch.title, status: 'active' } } } },
     },
     workspace: {
       async list() { return { rpcId: 'r', result: { ok: true, value: { items: [], archivedSessionIds: [] } } } },
@@ -282,7 +284,7 @@ function fakeApi() {
           rpcId: 'r',
           result: {
             ok: true,
-            value: { attachment: { ...imageAttachment, attachmentId: req.payload.attachmentId }, data: 'iVBORw0KGgo=' },
+            value: { attachment: { ...imageAttachment, attachmentId: req.payload.attachment.attachmentId }, data: 'iVBORw0KGgo=' },
           },
         }
       },
@@ -352,8 +354,11 @@ ctx.typertGateway = {
       if (req.method === 'search') return unwrap(api.sessions.search)
       if (req.method === 'create') return unwrap(api.sessions.create, request)
       if (req.method === 'prompt') {
-        const { requestId: _requestId, ...payload } = request
-        return unwrap(api.sessions.prompt, payload)
+        return unwrap(api.sessions.prompt, request)
+      }
+      if (req.method === 'events') {
+        const value = await unwrap(api.sessions.history)
+        return { records: value.events.map(entry => ({ type: 'event', event: entry.event })), cursor: 91, hasMore: false }
       }
       if (req.method === 'attachment') return unwrap(api.sessions.attachment)
       if (req.method === 'fork') return unwrap(api.sessions.fork)
@@ -383,7 +388,7 @@ ctx.typertGateway = {
     if (req.namespace === 'permissionPresets' && req.method === 'catalog') return unwrap(api.permissionPresets.catalog, {})
     if (req.namespace === 'schedule') {
       const value = await unwrap(api.schedule[req.method], req.args.request ?? {})
-      return req.method === 'catalog' || req.method === 'list' ? value.items : value
+      return req.method === 'catalog' ? value.items : value
     }
     if (req.namespace === 'llm' && req.method === 'listConfigurableProviders') {
       return (await unwrap(api.llm.providers, {})).providers
@@ -513,6 +518,10 @@ function waitFor(pred, timeout) { return new Promise((res) => { const t0 = Date.
   assert.deepEqual(got.find(frame => frame.seq === 9004).event.reasonDetails.error, retry.failure)
   interactionResults.push(['v4 failed tool and attempt payloads', true])
 
+  listeners['session/event']({ id: 's1' }, { type: 'user/message', seq: 8999, time: 5, data: { id: 'quoted-message', source: { kind: 'user', rpcId: 'quote-replay' }, content: [{ type: 'text', text: '> 来自 Web 的引用\n\n回复' }] } })
+  await waitFor(() => got.some(frame => frame.seq === 8999), 2000)
+  assert.deepEqual(got.find(frame => frame.seq === 8999).event.textParts[0], { type: 'quote', text: '来自 Web 的引用' })
+  assert.equal(got.find(frame => frame.seq === 8999).event.requestId, 'quote-replay')
   const delivered = { turn: 1, callId: 'present-pdf', files: [
     { path: 'guide.pdf', description: 'PDF 攻略', ignored: 'not on wire' },
     { path: path.join(fileDownloadRoot, '三亚 攻略.pdf') },
@@ -687,7 +696,7 @@ function waitFor(pred, timeout) { return new Promise((res) => { const t0 = Date.
       ws.send(JSON.stringify({ type: 'subscribe', sessionId: 'another-session' }))
       assert.equal(await waitFor(() => got.some(f => f.kind === 'subscribed' && f.sessionId === 'another-session'), 2000), true)
       const updatedOutline = [...initialTurnOutline, { turn: 2, seq: 93, prompt: '继续调整', response: '' }]
-      controlFrames.push({ type: 'projection', sessionId: 's1', key: 'turnOutline', value: updatedOutline, seq: 93 })
+      controlFrames.push({ type: 'projection', sessionId: 's1', changes: [{ key: 'turnOutline', val: updatedOutline }, { key: 'todos', val: [] }], seq: 93 })
       assert.equal(await waitFor(() => controls.some(f => f.kind === 'turn-outline-updated' && f.asOfSeq === 93)
         && got.some(f => f.kind === 'turn-outline-updated' && f.asOfSeq === 93), 2000), true)
       assert.deepEqual(controls.find(f => f.kind === 'turn-outline-updated' && f.asOfSeq === 93).turnOutline, updatedOutline)
@@ -1215,12 +1224,14 @@ function waitFor(pred, timeout) { return new Promise((res) => { const t0 = Date.
     ['select-model missing field', { type: 'select-model', sessionId: 's1', provider: 'deepseek' }, (m) => m.kind === 'error' && m.code === 'bad-request'],
     ['permission-options', { type: 'permission-options', sessionId: 's1' }, (m) => m.kind === 'permission-options' && m.namespace.ns === 'permission' && m.sessionPermissions?.currentValue === 'ask' && m.sessionPermissions.options[0].value === 'ask' && m.defaultOptions[1].value === 'code'],
     ['schedule catalog', { type: 'schedule-catalog' }, (m) => m.kind === 'schedule-catalog' && m.items[0].sessionId === 's1' && m.items[0].status === 'active' && invokeCalls.some((c) => c.namespace === 'schedule' && c.method === 'catalog' && Object.keys(c.args).length === 0)],
-    ['schedule list', { type: 'schedule-list', sessionId: 's1' }, (m) => m.kind === 'schedule-list' && m.sessionId === 's1' && m.items[0].kind === 'every' && invokeCalls.some((c) => c.namespace === 'schedule' && c.method === 'list' && c.args.request.sessionId === 's1')],
+    ['schedule list', { type: 'schedule-list', sessionId: 's1' }, (m) => m.kind === 'schedule-list' && m.sessionId === 's1' && m.items[0].kind === 'every' && invokeCalls.some((c) => c.namespace === 'schedule' && c.method === 'catalog')],
+    ['host schedule pagination', { type: 'schedule-list', limit: 10, offset: 0, requestId: 'host-page' }, (m) => m.kind === 'schedule-list' && m.requestId === 'host-page' && m.items.length === 1 && invokeCalls.some(c => c.namespace === 'schedule' && c.method === 'list' && c.args.request.limit === 10 && !('sessionId' in c.args.request))],
+    ['host schedule CAS edit', { type: 'schedule-edit', id: 'reminder-1', action: 'update', expectedUpdatedAt: null, patch: { title: '宿主任务' }, requestId: 'host-edit' }, m => m.kind === 'schedule-edit' && m.requestId === 'host-edit' && m.title === '宿主任务'],
     ['schedule history', { type: 'schedule-history', sessionId: 's1', id: 'reminder-1', limit: 20, before: 'message-1' }, (m) => m.kind === 'schedule-history' && m.id === 'reminder-1' && m.records.length === 0 && invokeCalls.some((c) => c.namespace === 'schedule' && c.method === 'history' && c.args.request.limit === 20 && c.args.request.before === 'message-1')],
     ['schedule history invalid limit', { type: 'schedule-history', sessionId: 's1', id: 'reminder-1', limit: 101 }, (m) => m.kind === 'error' && m.code === 'bad-request' && m.requestType === 'schedule-history'],
-    ['schedule update', { type: 'schedule-update', sessionId: 's1', id: 'reminder-1', expected: { ...scheduleRecord, sessionId: 's1', status: 'active' }, title: '检查新构建', requestId: 'edit-1' }, (m) => m.kind === 'schedule-update' && m.requestId === 'edit-1' && m.record.title === '检查新构建' && invokeCalls.some((c) => c.namespace === 'schedule' && c.method === 'update' && c.args.request.expected.id === 'reminder-1' && !('status' in c.args.request.expected) && !('sessionId' in c.args.request.expected) && c.args.request.title === '检查新构建')],
+    ['schedule update', { type: 'schedule-update', sessionId: 's1', id: 'reminder-1', expected: { ...scheduleRecord, sessionId: 's1', status: 'active' }, title: '检查新构建', requestId: 'edit-1' }, (m) => m.kind === 'schedule-update' && m.requestId === 'edit-1' && m.record.title === '检查新构建' && invokeCalls.some((c) => c.namespace === 'schedule' && c.method === 'edit' && c.args.request.id === 'reminder-1' && c.args.request.action === 'update' && c.args.request.expectedUpdatedAt === null && c.args.request.patch.title === '检查新构建')],
     ['schedule update mismatched record', { type: 'schedule-update', sessionId: 's1', id: 'reminder-1', expected: { ...scheduleRecord, id: 'other' } }, (m) => m.kind === 'error' && m.code === 'bad-request' && m.requestType === 'schedule-update'],
-    ['schedule delete', { type: 'schedule-delete', sessionId: 's1', id: 'reminder-1' }, (m) => m.kind === 'schedule-delete' && m.deleted === true && invokeCalls.some((c) => c.namespace === 'schedule' && c.method === 'delete' && c.args.request.id === 'reminder-1')],
+    ['schedule delete', { type: 'schedule-delete', sessionId: 's1', id: 'reminder-1' }, (m) => m.kind === 'schedule-delete' && m.deleted === true && invokeCalls.some((c) => c.namespace === 'schedule' && c.method === 'edit' && c.args.request.action === 'delete' && c.args.request.id === 'reminder-1')],
     ['permission', { type: 'permission', sessionId: 's1', name: 'code' }, (m) => m.kind === 'permission' && m.set === 'code' && m.commandId === 'cmd-1' && invokeCalls.some((c) => c.namespace === 'commands' && c.method === 'execute' && c.args.line === '/permission code' && c.args.agentId === 's1' && Array.isArray(c.args.submittedAttachments) && c.args.submittedAttachments.length === 0 && !('agent' in c.args)) && api.promptCalls.length === 0],
     ['permission missing name', { type: 'permission', sessionId: 's1' }, (m) => m.kind === 'error' && m.code === 'bad-request'],
     ['permission unknown command', { type: 'permission', sessionId: 's1', name: 'missing' }, (m) => m.kind === 'error' && m.code === 'unknown-command'],
@@ -1238,6 +1249,8 @@ function waitFor(pred, timeout) { return new Promise((res) => { const t0 = Date.
     ['message create in workspace', { type: 'message', text: 'hi', workspaceId: 'w1' }, (m) => m.kind === 'sent' && api._createCalls.length >= 1 && JSON.stringify(api._createCalls[api._createCalls.length - 1]) === JSON.stringify({ workspaceId: 'w1' })],
     ['message create with cwd', { type: 'message', text: 'hi', cwd: '/tmp' }, (m) => m.kind === 'sent' && JSON.stringify(api._createCalls[api._createCalls.length - 1]) === JSON.stringify({ cwd: '/tmp' })],
     ['message create both -> workspaceId wins', { type: 'message', text: 'hi', workspaceId: 'w2', cwd: '/tmp' }, (m) => m.kind === 'sent' && JSON.stringify(api._createCalls[api._createCalls.length - 1]) === JSON.stringify({ workspaceId: 'w2' })],
+    ['queued message quotes', { type: 'queue-update', sessionId: 's1', itemId: 'message-1', action: 'edit', textParts: [{ type: 'quote', text: '原文' }, { type: 'text', text: '修改后的回复' }] }, m => m.kind === 'queue-item-updated' && api.queueUpdateCalls.at(-1).action.content[0].text === '> 原文\n\n修改后的回复'],
+    ['message ordered quotes', { type: 'message', sessionId: 's1', requestId: 'quote-ws', textParts: [{ type: 'quote', text: '原回复\n第二行' }, { type: 'text', text: '请展开' }] }, (m) => { const p = api.promptCalls.at(-1); return m.kind === 'sent' && m.requestId === 'quote-ws' && p.requestId === 'quote-ws' && p.content[0].text === '> 原回复\n> 第二行\n\n请展开' }],
     ['message image upload', { type: 'message', sessionId: 's1', text: 'describe this', clientTimeZone: 'Asia/Shanghai', images: [{ mediaType: 'image/jpeg', data: '/9j/2Q==', name: 'photo.jpg' }] }, (m) => { const p = api.promptCalls[api.promptCalls.length - 1]; return m.kind === 'sent' && p.clientTimeZone === 'Asia/Shanghai' && p.content[0].type === 'image' && p.content[0].data === '/9j/2Q==' && p.content[1].text === 'describe this' }],
     ['message image only', { type: 'message', sessionId: 's1', images: [{ mediaType: 'image/png', data: 'iVBORw0KGgo=' }] }, (m) => { const p = api.promptCalls[api.promptCalls.length - 1]; return m.kind === 'sent' && p.content.length === 1 && p.content[0].type === 'image' }],
     ['message invalid image', { type: 'message', sessionId: 's1', images: [{ mediaType: 'image/tiff', data: 'AA==' }] }, (m) => m.kind === 'error' && m.code === 'bad-request'],

@@ -1,6 +1,6 @@
 # dsh Mobile Gateway — 移动业务与传输协议参考
 
-移动端通过经过设备鉴权的 WebSocket 连接与 dsh 通信：订阅 agent 实时输出、发送文字和图片、处理 Human-in-the-loop 提问与操作审批、查询会话/工作区/历史、调整会话配置。本协议由持久化插件 `dsh-plugin-mobile-gateway` 实现。当前源码适配 DSH 0.2.1-rc.2 / Session format 4；移动端实时流接入见 [rc.2 接入说明](docs/dsh-rc2-mobile-integration.md)，插件管理见 [RC2 插件管理对接方案](docs/dsh-0.2.0-rc.2-plugin-management-mobile-integration.md)。
+移动端通过经过设备鉴权的 WebSocket 连接与 dsh 通信：订阅 agent 实时输出、发送文字和图片、处理 Human-in-the-loop 提问与操作审批、查询会话/工作区/历史、调整会话配置。本协议由持久化插件 `dsh-plugin-mobile-gateway` 实现。当前源码适配 DSH 0.2.2-rc.1 / Session format 4；移动端实时流接入见 [rc.2 接入说明](docs/dsh-rc2-mobile-integration.md)，插件管理见 [RC2 插件管理对接方案](docs/dsh-0.2.0-rc.2-plugin-management-mobile-integration.md)。
 
 DSH Remote 要求的 `peer` 由网关在 Host 内部创建并注入，身份沿用已配对设备的本机用户权限，生命周期随插件释放；移动端请求帧不增加 `peer` 字段，`dsh-mobile-v1` 协议不变。
 
@@ -13,6 +13,8 @@ DSH Remote 要求的 `peer` 由网关在 Host 内部创建并注入，身份沿�
 实验传输扩展：`webrtc-upgrade-v1` 复用鉴权 WebSocket 作为 bootstrap，两个独立 PC 分别承载 control/conversation，显式整组提交后才接入下文业务。WebSocket 继续 JSON 文本；RTC 使用 MGW1 有界二进制分片。实验默认关闭；原有协议和配对不变。完整信令、票据、安全、回退、分片头和 App 状态机以 [WebRTC 接入契约](docs/webrtc-app-integration.md) 为准；共享字节向量见 [transport-v1 fixtures](test/fixtures/transport-v1/frames.json)。网关可联调，App 待接入。
 
 ---
+
+本次新增 `message-quotes-v1`、`schedule-management-v2` 和 `plugin-updates-v1`。完整帧示例、引用回放、任务 CAS、插件更新恢复及 App 验收见 [DSH 0.2.2-rc.1 移动端适配说明](docs/dsh-0.2.2-rc.1-mobile-integration.md)。
 
 ## 1. 通用约定
 
@@ -572,7 +574,7 @@ iOS 将本地图片原始文件数据编码成**标准 Base64**，不要包含 `
 
 支持的 `mediaType`：`image/png`、`image/jpeg`、`image/webp`、`image/gif`。宿主会验证 Base64、文件签名、格式、尺寸、像素数、单图大小、图片数量和总大小；声明 MIME 与真实字节不一致会拒绝整条消息，且不会产生部分附件。
 
-当前 DSH 默认最多 20 张图片、单图约 3.5 MiB、单条消息图片总计 100 MiB，实际值以最近一次 `history.projections.values.imageLimits` 为准。WebSocket 单帧上限默认 144 MiB，用于容纳 100 MiB 图片经 Base64 后的 JSON 请求；反向代理也必须允许相应大小的 WebSocket 帧。
+当前 DSH 默认最多 20 张图片、单图 50 MiB、单条消息图片总计 100 MiB，实际值以最近一次 `history.projections.values.imageLimits` 为准。WebSocket 单帧上限默认 144 MiB，用于容纳 100 MiB 图片经 Base64 后的 JSON 请求；反向代理也必须允许相应大小的 WebSocket 帧。
 
 Swift 编码示例：
 
@@ -1293,21 +1295,26 @@ DSH Web 的“深度求索中，用时 22 秒 ···”是客户端文案，不�
 
 ---
 
-## 17. 定时任务（DSH 0.1.7-rc.2）
+## 17. 定时任务（DSH 0.2.2-rc.1）
 
-以下请求走控制连接，网关映射到 Host `schedule` Remote namespace。Host 未启用定时任务时返回统一的 `kind: error`，`requestType` 保留原请求类型。定时任务与第 6 节的 Session `todos` 是不同的数据源。
+以下请求走控制连接，Host 未启用定时任务时返回统一错误。`schedule-management-v2` 使用宿主级任务模型，响应为平铺字段并回显可选 `requestId`。
 
-| 请求 type | 参数 | 成功响应 |
+| 请求 | 参数 | 响应 |
 |---|---|---|
-| `schedule-catalog` | — | `kind: schedule-catalog`, `items`: 全宿主活动与已结束提醒，包含原 `sessionId`、`status` 和可选最近投递回执 |
-| `schedule-list` | `sessionId` | `kind: schedule-list`, `sessionId`, `items`: 当前会话活动提醒 |
-| `schedule-history` | `sessionId`, `id`, `limit` 1–100, `before?` | `kind: schedule-history`, `records`（从新到旧）、`retention`、`nextBefore?`；任务或游标未找到时在成功帧中返回 `code` |
-| `schedule-update` | `sessionId`, `id`, 完整的 `expected`, `title?`, `prompt?`, `change?`, `requestId?` | `kind: schedule-update`, `updated`, `record`；并发冲突、已结束或未找到时返回 `updated:false` 与 `code` |
-| `schedule-delete` | `sessionId`, `id`, `requestId?` | `kind: schedule-delete`, `deleted`；未找到时返回 `deleted:false` 与 `code` |
+| `schedule-catalog` | `requestId?` | `items` 全量目录 |
+| `schedule-list` | `active?`, `limit?` 1–500, `offset?`, `requestId?` | `items/shown/total/limit/offset` |
+| `schedule-view` | `id`, `requestId?` | 当前任务或 `id/code` |
+| `schedule-create` | `title/prompt/timing`, `target?`, `requestId?` | 创建后的任务 |
+| `schedule-edit` | `id/action/expectedUpdatedAt`, `patch?`, `requestId?` | 更新后的任务，或 `deleted:true`，或 `id/code` |
+| `schedule-history` | `id`, `limit` 1–100, `before?`, `requestId?` | `records/retention/nextBefore?` 等 |
+| `schedule-run` | `id`, `requestId?` | 任务或 `id/code` |
+| `schedule-delete-inactive` | `confirm:true`, `requestId?` | `deleted` 数量 |
 
-`expected` 必须是编辑前从 `schedule-list` 或 `schedule-catalog` 取得的完整任务记录，`id` 必须匹配；不要只传 id 或重建部分字段。网关会去掉目录行额外的 `sessionId`、`status`、`lastDelivery` 元数据后调用 Host。`change` 使用 Host 的 `at`、`every`、`daily`、`weekly`、`cron` 判别结构。更新与删除只对原会话绑定生效；`requestId` 若提供会原样回显。删除会同时移除该任务的投递记录，不撤回已入队的消息。
+`schedule-edit.action` 为 `update/delete`。修改时 `patch` 支持 `title/prompt/timing/target/active`。`expectedUpdatedAt` 必须使用读取到的 `updatedAt`，缺失时传 `null`。`schedule_conflict` 时保留草稿并重新读取，复核后再提交。
 
-rc.2 没有 `schedule/create` Remote 方法。新提醒由 Agent 的 `schedule_create` 工具创建；到期提醒作为 `source.kind: schedule` 的消息进入原 Session。Host 的无载荷 `schedule/changed` 被投影为移动端 `schedule-changed`；实现定时任务管理页面的客户端应在收到通知、重连或完成更新/删除后重新查询目录。当前移动端只接入协议请求、解码与变更帧识别，尚未提供管理页面。`hello.capabilities` 中的 `schedule-management` 表示网关支持这些请求，实际使用仍取决于 Host 是否启用定时任务。
+旧 `schedule-list(sessionId)` 继续返回该会话关联的活动任务，与宿主级分页参数互斥。旧 `schedule-update(sessionId?, id, expected, title?, prompt?, change?)` 转换为带 CAS 的编辑，`expected` 无 revision 时比对当前记录。旧 `schedule-delete(sessionId?, id, expectedUpdatedAt?)` 转换为删除。旧帧的 `sessionId` 若存在则继续限定任务关联范围。
+
+Host `schedule/changed` 转为无载荷 `schedule-changed`。重连、通知或写操作结束后刷新目录与详情。完整目标、规则、冲突、旧客户端转换和示例见 [移动端适配说明](docs/dsh-0.2.2-rc.1-mobile-integration.md)。
 
 ## 18. 插件管理（DSH 0.2.0-rc.2）
 
@@ -1317,6 +1324,9 @@ rc.2 没有 `schedule/create` Remote 方法。新提醒由 Agent 的 `schedule_c
 |---|---|---|
 | `plugin-catalog` | `requestId` | 同名 kind；`managementAvailable`、`bundles`（每项含 `experimental`）、`plugins`、`officialItems`、`settingsWritable` |
 | `plugin-registries` | `requestId` | 同名 kind；`registry`、`fallbackRegistries`、`resolved` |
+| `plugin-versions` | `requestId`, `name`, `registry?` | 同名 kind；`result` 为版本列表或业务拒绝 |
+| `plugin-detail` | `requestId`, `name`, `language` | 同名 kind；`result` 为 Markdown 详情或 none |
+| `plugin-update` | `requestId`, `name`, `version`, `registry?` | `plugin-update-result`；`result` 含最后阶段结果和可选 restore |
 | `plugin-inspect` | `requestId`, `spec`, `registry?` | `plugin-inspection`；`result` 为 accepted/refused 检查结果 |
 | `plugin-install` | `requestId`, `spec`, `enabled?`, `registry?`, `approvedBuilds?` | `plugin-install-result`；`result` 为 Host `ChangeResult` |
 | `plugin-install-status` / `plugin-install-cancel` | `requestId`, `installId` | 同名 kind；`result` 为安装结果/null 或取消状态 |
@@ -1328,6 +1338,8 @@ rc.2 没有 `schedule/create` Remote 方法。新提醒由 Agent 的 `schedule_c
 | `plugin-version-exemptions` / `plugin-version-exemption-set` | `requestId`；写入还需 `packageVersion`, `runtimeVersion`, `enabled`, `acceptRisk?` | 同名 kind；豁免列表或 `ChangeResult` |
 
 Host 的 `plugin-manager/changed` 转为 `plugins-changed`（含 `reason`），`settings/document-updated` 转为 `plugin-settings-changed`（含 `ns`、`revision`）。`plugin-manager/install-state` 和 `plugin-manager/install-log` 只发给发起安装的连接，分别转为 `plugin-install-state` 和 `plugin-install-log`；它们的 `requestId` 就是原安装请求 ID。断线后用新的请求 ID 调 `plugin-install-status`，`installId` 填原安装 ID；切勿直接重复安装。关闭/卸载网关插件自身可能先断线，再由 DSH Web/CLI 恢复。
+
+新增 `plugin-updates-v1` 的更新进度、两层结果、恢复状态与断线核实，以及详情读取，见 [0.2.2-rc.1 移动端适配说明](docs/dsh-0.2.2-rc.1-mobile-integration.md)。
 
 详细字段、官方/第三方页面分组、安装进度、配置 schema、错误处理和 DSH Mobile 验收步骤见 [插件管理对接方案](docs/dsh-0.2.0-rc.2-plugin-management-mobile-integration.md)。
 

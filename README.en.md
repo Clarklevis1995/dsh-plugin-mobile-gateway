@@ -10,7 +10,9 @@
 
 A third-party mobile gateway for DeepSeek Harness with device authentication. Supports sessions and live events; queued-message synchronization, editing, deletion, and Steer; bidirectional session archiving and renaming; stopping and resuming generation; task lists and the current Goal; server-driven command and skill menus; human-in-the-loop workflows; and image and file transfers. After installation, a Mobile Devices entry appears in the Harness WebUI sidebar for enabling the gateway, generating pairing QR codes, and managing trusted devices.
 
-> The current source targets **DSH 0.2.1-rc.2**, requires the Connection Peer interface, and uses Session format 4. Older history cursors require a fresh baseline.
+> The current source targets **DSH 0.2.2-rc.1**, requires the Connection Peer interface, and uses Session format 4. Older history cursors require a fresh baseline.
+>
+> Unreleased source adds ordered chat quotes, Host-wide schedules and plugin updates, and adapts batched projections and image reads. Requires Node.js 24.9+. See the [mobile integration guide](docs/dsh-0.2.2-rc.1-mobile-integration.md).
 >
 > Live output now uses separate `assistant-stream` frames. Mobile clients must update subscriptions, caches, and pagination according to the [rc.2 integration guide](docs/dsh-rc2-mobile-integration.md). These changes are not yet released.
 >
@@ -36,7 +38,7 @@ A third-party mobile gateway for DeepSeek Harness with device authentication. Su
 
 ## Protocol and DSH Compatibility Layer
 
-Mobile clients use this project's `dsh-mobile-v1`, not DSH's internal Remote protocol. A separate Host Adapter connects to the DSH 0.2.1-rc.2 Remote Gateway. Namespaces such as Session, Workspace, Settings, Commands, Goals, Schedule, Permission Presets, and Plugin Manager, together with their strict parameters, are confined to that adapter. See the [RC2 plugin management integration plan](docs/dsh-0.2.0-rc.2-plugin-management-mobile-integration.md) for request frames and mobile UI design.
+Mobile clients use this project's `dsh-mobile-v1`, not DSH's internal Remote protocol. A separate Host Adapter connects to the DSH 0.2.2-rc.1 Remote Gateway. Namespaces such as Session, Workspace, Settings, Commands, Goals, Schedule, Permission Presets, and Plugin Manager, together with their strict parameters, are confined to that adapter. See the [RC2 plugin management integration plan](docs/dsh-0.2.0-rc.2-plugin-management-mobile-integration.md) for request frames and mobile UI design.
 
 DSH 0.2.1-rc.2 requires `peer` on every Remote call. The gateway creates a local-user Peer with `ctx.connection.createPeer()` and disposes of it with the plugin. The Host Adapter injects it into regular requests, initial reads, and live subscriptions; mobile clients cannot choose the caller identity. Questions and approvals still use the gateway's Host listeners. Older gateways that omit it fail with `Cannot read properties of undefined (reading 'signal')`. After upgrading DSH, reinstall this source version and restart `dsh web`; the phone protocol needs no change.
 

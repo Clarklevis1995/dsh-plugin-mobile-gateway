@@ -46,7 +46,8 @@ const gateway = {
     if (call.namespace === 'goals' && call.method === 'edit') return { id: 'goal-1', revision: 2 }
     if (call.namespace === 'goals' && call.method === 'clear') return { id: 'goal-1', revision: 3 }
     if (call.namespace === 'commands' && call.method === 'list') return []
-    if (call.namespace === 'schedule' && (call.method === 'catalog' || call.method === 'list')) return []
+    if (call.namespace === 'schedule' && call.method === 'catalog') return []
+    if (call.namespace === 'schedule' && call.method === 'list') return { items: [], shown: 0, total: 0, limit: 100, offset: 0 }
     if (call.namespace === 'schedule') return { id: 'task-1', deleted: true }
     return { accepted: true }
   },
@@ -213,10 +214,11 @@ assert.deepEqual(calls.find((call) => call.namespace === 'permissionPresets').ar
 
 assert.deepEqual(await host.schedule.catalog(), { items: [] })
 assert.deepEqual(await host.schedule.list({ sessionId: 's1' }), { items: [] })
-assert.deepEqual(await host.schedule.delete({ sessionId: 's1', id: 'task-1' }), { id: 'task-1', deleted: true })
+assert.deepEqual(await host.schedule.edit({ id: 'task-1', action: 'delete', expectedUpdatedAt: null }), { id: 'task-1', deleted: true })
 assert.deepEqual(calls.find((call) => call.namespace === 'schedule' && call.method === 'catalog').args, {})
-assert.deepEqual(calls.find((call) => call.namespace === 'schedule' && call.method === 'list').args, { request: { sessionId: 's1' } })
-assert.deepEqual(calls.find((call) => call.namespace === 'schedule' && call.method === 'delete').args, { request: { sessionId: 's1', id: 'task-1' } })
+assert.deepEqual(await host.schedule.list({ limit: 100 }), { items: [], shown: 0, total: 0, limit: 100, offset: 0 })
+assert.deepEqual(calls.find((call) => call.namespace === 'schedule' && call.method === 'list').args, { request: { limit: 100 } })
+assert.deepEqual(calls.find((call) => call.namespace === 'schedule' && call.method === 'edit').args, { request: { id: 'task-1', action: 'delete', expectedUpdatedAt: null } })
 
 assert.deepEqual(
   await host.goals.edit({ sessionId: 's1', ref: { id: 'goal-1', revision: 1 }, objective: '完成重构' }),

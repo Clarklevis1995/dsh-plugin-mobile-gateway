@@ -12,7 +12,7 @@ assert.ok(process.env.DSH_INSTALL_ROOT, 'Set DSH_INSTALL_ROOT to the installed o
 const require = createRequire(path.join(process.env.DSH_INSTALL_ROOT, 'package.json'))
 const { default: SpeechController } = await import(pathToFileURL(require.resolve('@deepseek-ai/dsh-experimental-api-speech-to-text')).href)
 const { version } = require('@deepseek-ai/dsh-experimental-api-speech-to-text/package.json')
-assert.equal(version, '0.2.1-rc.2')
+assert.equal(version, '0.2.2-rc.1')
 let calls = 0
 const controller = { config: { maxAudioBytes: 4194304, maxDurationSeconds: 120 }, ctx: { speechToText: {
   snapshot: () => ({ providers: [{ id: 'sensevoice-local', preparation: { phase: 'ready' } }],
@@ -45,4 +45,4 @@ assert.equal((await request(wrongSampleRate)).code, 'speech/transcription-failed
 assert.equal((await request(Buffer.from('not a wav'))).code, 'speech/transcription-failed')
 assert.equal(calls, 1, 'Invalid audio must be rejected before provider selection')
 manager.dispose()
-console.log('OFFICIAL SPEECH REMOTE CONTRACT TESTS PASSED (DSH 0.2.1-rc.2; recognizer mocked)')
+console.log('OFFICIAL SPEECH REMOTE CONTRACT TESTS PASSED (DSH 0.2.2-rc.1; recognizer mocked)')
