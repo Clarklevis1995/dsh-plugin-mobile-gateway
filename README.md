@@ -198,6 +198,10 @@ dsh web
 
 Open WebUI and confirm Mobile Devices appears at the bottom of the left sidebar.
 
+### Interface language
+
+The panel follows the browser language and falls back to Chinese. To switch it, open General → Language and pick English, 简体中文, or 日本語. The choice is saved for the current browser only, applies immediately, and Auto restores the browser language.
+
 ## LAN Pairing
 
 For the DSH computer and mobile device on the same mutually reachable LAN.
