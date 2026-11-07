@@ -21,7 +21,7 @@ test('actual network page renders metrics and cancels polling on background or u
     if (!pending) return Promise.resolve(data)
     return new Promise((_resolve, reject) => options.signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })), { once: true }))
   }
-  const sandbox = { React, document, request, AbortController, Date, tr: text => text, styles: {}, colors: {}, window: {
+  const sandbox = { uiLanguage: { locale: 'zh' }, React, document, request, AbortController, Date, tr: text => text, styles: {}, colors: {}, window: {
     setTimeout: (fn, duration) => { const id = ++sequence; timers.set(id, { fn, duration }); return id },
     clearTimeout: id => timers.delete(id),
   } }

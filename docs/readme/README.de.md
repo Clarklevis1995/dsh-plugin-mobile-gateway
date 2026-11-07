@@ -8,9 +8,11 @@
 
 # dsh-plugin-mobile-gateway
 
+> **v0.12.0 · Veröffentlichung in Vorbereitung** — Unterstützt DSH 0.2.2-rc.1 und Node.js 24.9+. Neu sind Chatzitate, Host-weite Zeitpläne, Plugin-Updates und Details sowie eine Sprachauswahl, die DSH folgt. Korrigiert gebündelte Projektionsupdates und das Lesen von Bildern. [Änderungen](../../CHANGELOG.md) · [Mobile Integration](../dsh-0.2.2-rc.1-mobile-integration.md)
+
 Mobiles Drittanbieter-Gateway für DeepSeek Harness mit Geräteauthentifizierung. Sitzungen und Live-Ereignisse, Warteschlangen mit Bearbeiten/Löschen/Steer, bidirektionales Archivieren/Umbenennen, Generierung stoppen/fortsetzen, Aufgaben und aktuelles Goal, servergesteuerte Befehls-/Skill-Menüs, menschliche Freigaben sowie Bild-/Dateiübertragung. Nach Installation bietet Mobilgeräte in WebUI Gateway-Schalter, Kopplungs-QR und vertrauenswürdige Geräte.
 
-> Aktueller Quellcode für **DSH 0.2.1-rc.2**, mit Connection Peer und Session format 4. Alte Verlaufscursor benötigen eine neue Basis.
+> Aktueller Quellcode für **DSH 0.2.2-rc.1**, mit Connection Peer und Session format 4. Alte Verlaufscursor benötigen eine neue Basis.
 >
 > Live-Ausgabe nutzt separate `assistant-stream`-Frames. Abonnements, Cache und Paginierung gemäß [rc.2-Anleitung](../dsh-rc2-mobile-integration.md) anpassen. Noch nicht veröffentlicht.
 >

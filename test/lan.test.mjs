@@ -117,6 +117,7 @@ async function waitForLanStatus(base) {
   const base = `http://127.0.0.1:${webServer.port}`
 
   const status = await waitForLanStatus(base)
+  assert.equal(status.cloudflare.supported, ['darwin', 'win32', 'linux'].includes(process.platform))
   assert.equal(status.lan.enabled, true)
   assert.equal(status.lan.listening, true)
   assert.equal(status.lan.requireAuth, true)
@@ -222,7 +223,7 @@ async function waitForLanStatus(base) {
   main.close()
   await once(main, 'close')
 
-  if (process.platform === 'darwin' || process.platform === 'win32') {
+  if (['darwin', 'win32', 'linux'].includes(process.platform)) {
     const configured = await fetch(`${base}/mgw/cloudflare`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Origin: base },

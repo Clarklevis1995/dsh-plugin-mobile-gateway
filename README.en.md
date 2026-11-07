@@ -8,15 +8,17 @@
 
 # dsh-plugin-mobile-gateway
 
+> **v0.12.0 · pending release** — Targets DSH 0.2.2-rc.1 and Node.js 24.9+. Adds ordered chat quotes, Host-wide schedule management, plugin updates and details, and a language selector that follows DSH. Fixes batched projection updates and image reads. See the [changelog](CHANGELOG.md) and [mobile integration guide](docs/dsh-0.2.2-rc.1-mobile-integration.md).
+
 A third-party mobile gateway for DeepSeek Harness with device authentication. Supports sessions and live events; queued-message synchronization, editing, deletion, and Steer; bidirectional session archiving and renaming; stopping and resuming generation; task lists and the current Goal; server-driven command and skill menus; human-in-the-loop workflows; and image and file transfers. After installation, a Mobile Devices entry appears in the Harness WebUI sidebar for enabling the gateway, generating pairing QR codes, and managing trusted devices.
 
 > The current source targets **DSH 0.2.2-rc.1**, requires the Connection Peer interface, and uses Session format 4. Older history cursors require a fresh baseline.
 >
-> Unreleased source adds ordered chat quotes, Host-wide schedules and plugin updates, and adapts batched projections and image reads. Requires Node.js 24.9+. See the [mobile integration guide](docs/dsh-0.2.2-rc.1-mobile-integration.md).
+> v0.12.0 adds ordered chat quotes, Host-wide schedules, plugin updates and details, DSH language synchronization, and compatibility for batched projections and image reads. Requires Node.js 24.9+. See the [mobile integration guide](docs/dsh-0.2.2-rc.1-mobile-integration.md).
 >
 > Live output now uses separate `assistant-stream` frames. Mobile clients must update subscriptions, caches, and pagination according to the [rc.2 integration guide](docs/dsh-rc2-mobile-integration.md). These changes are not yet released.
 >
-> v0.11.1 (current source, not yet released): chunked file uploads with SHA-256 verification, progress acknowledgments, cancellation, and disconnect cleanup. Reuses official DSH attachment storage and session-scoped credentials for sending files with messages and resolving live/history file references. Clients must implement `file-upload-v1`; see the [file upload integration guide](docs/file-upload-app-integration.md).
+> v0.11.1: chunked file uploads with SHA-256 verification, progress acknowledgments, cancellation, and disconnect cleanup. Reuses official DSH attachment storage and session-scoped credentials for sending files with messages and resolving live/history file references. Clients must implement `file-upload-v1`; see the [file upload integration guide](docs/file-upload-app-integration.md).
 >
 > v0.11.0: Agent teams and subagent conversations, including members, shared task boards, nested subagent directories, live runtime status, independent history, view switching, continued conversations, image input, and stopping subagents. Clients must discover capabilities; see the [Agent team integration guide](docs/agent-team-app-integration.md).
 >
@@ -35,6 +37,8 @@ A third-party mobile gateway for DeepSeek Harness with device authentication. Su
 > v0.7.3: adjusts arrow spacing in the gateway-mode dropdown.
 >
 > v0.7.2: separate conversation/control connections, empty sessions, stop/resume generation, queued-message sync/edit/delete/Steer, and bidirectional session archiving and renaming.
+
+The plugin’s General → Interface language option follows DSH by default and updates immediately. You can select 简体中文, English or 日本語 for this browser. Other DSH languages use English, and existing manual preferences are retained.
 
 ## Protocol and DSH Compatibility Layer
 
@@ -270,9 +274,9 @@ Open Mobile Devices, enter the cloud console's public IPv4 in Public Access, and
 
 QR codes are single-use and expire after 5 minutes. Generate a new one in WebUI if needed.
 
-## Remote Access to Home Windows / macOS Computers
+## Remote Access on Windows / macOS / Linux
 
-Home computers usually lack a fixed public IP; router port forwarding is not recommended here. The Windows/macOS panel offers account/domain-free Quick Tunnels and fixed-domain named Tunnels. On first use, the plugin downloads and verifies official Cloudflare `cloudflared` into the current user's cache. No manual system service installation is required.
+Home computers usually lack a fixed public IP; router port forwarding is not recommended here. The Windows/macOS/Linux panel offers account/domain-free Quick Tunnels and fixed-domain named Tunnels. On first use, the plugin downloads and verifies official Cloudflare `cloudflared` into the current user's cache. No manual system service installation is required. Linux x64 and arm64 use the official standalone binaries from the pinned [Cloudflare 2026.9.3 release](https://github.com/cloudflare/cloudflared/releases/tag/2026.9.3), verified with SHA-256. For other Linux architectures, or to use an existing installation, set `cloudflaredPath` to an executable’s absolute path. The default does not search PATH.
 
 Start `dsh web` first. The computer must stay awake, online, and running DSH; sleep or process exit interrupts remote access.
 
@@ -321,8 +325,8 @@ Tailscale Serve allows only devices permitted by the same Tailnet's access rules
 | Same LAN | Plugin LAN listener | `ws://<电脑局域网 IP>:3081/ws/mobile` | No Helper/Nginx; host and phone must reach each other | Private TCP `3081` only; keep authentication on |
 | Local iOS Simulator | DSH WebUI local route | `ws://127.0.0.1:<DSH WebUI 端口>/ws/mobile` | No Helper/Nginx or separate port `3081` | No external ports; disable authentication only for Debug |
 | Public Linux server | Helper + Nginx + TLS | `wss://<服务器公网 IPv4>/ws/mobile` | Run `init`, then enter public IPv4 in WebUI | Allow TCP `80/443`; do not expose DSH/`3081`; authentication required |
-| Home Windows / macOS | Cloudflare named Tunnel | `wss://<公开域名>/ws/mobile` | Route public hostname to `127.0.0.1:3082`; enter hostname/Token in panel | No router forwarding; dedicated listener requires device authentication |
-| Home Windows / macOS | Cloudflare Quick Tunnel | `wss://<随机名称>.trycloudflare.com/ws/mobile` | Enable in panel; scan again after URL changes | No account/domain/router forwarding; device authentication required |
+| Windows / macOS / Linux | Cloudflare named Tunnel | `wss://<公开域名>/ws/mobile` | Route public hostname to `127.0.0.1:3082`; enter hostname/Token in panel | No router forwarding; dedicated listener requires device authentication |
+| Windows / macOS / Linux | Cloudflare Quick Tunnel | `wss://<随机名称>.trycloudflare.com/ws/mobile` | Enable in panel; scan again after URL changes | No account/domain/router forwarding; device authentication required |
 | Home Windows / macOS | Tailscale Serve | `wss://<Tailscale 域名>/ws/mobile` | Forward to `127.0.0.1:3081` and enter generated URL in WebUI | No router forwarding; keep authentication on |
 
 ## Manage Linux Public Access

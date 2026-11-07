@@ -6,7 +6,10 @@ import path from 'node:path'
 import { EventEmitter, once } from 'node:events'
 import { PassThrough } from 'node:stream'
 import WebSocket from 'ws'
-import { createCloudflareTunnel } from '../lib/cloudflare-tunnel.mjs'
+import { createCloudflareTunnel, isCloudflareTunnelSupported } from '../lib/cloudflare-tunnel.mjs'
+
+for (const platform of ['darwin', 'win32', 'linux']) assert.equal(isCloudflareTunnelSupported(platform), true)
+for (const platform of ['android', 'freebsd']) assert.equal(isCloudflareTunnelSupported(platform), false)
 
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-cloudflare-test-'))
 const file = path.join(temp, 'cloudflare.json')
@@ -34,7 +37,7 @@ await once(probe, 'close')
 let gatewayEnabled = true
 let acceptedUpgrades = 0
 const create = () => createCloudflareTunnel({
-  file, port, wsPath: '/ws/mobile', supported: true, spawnProcess,
+  file, port, wsPath: '/ws/mobile', spawnProcess,
   prepareExecutable: async () => '/fake/cloudflared',
   probeEndpoint: async () => ({ state: 'reachable', message: 'mock route verified' }),
   isGatewayEnabled: () => gatewayEnabled,

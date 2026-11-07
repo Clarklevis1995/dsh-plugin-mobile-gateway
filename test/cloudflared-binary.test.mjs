@@ -9,7 +9,9 @@ import { cloudflaredAsset, ensureCloudflared } from '../lib/cloudflared-binary.m
 assert.equal(cloudflaredAsset('darwin', 'arm64'), 'cloudflared-darwin-arm64.tgz')
 assert.equal(cloudflaredAsset('darwin', 'x64'), 'cloudflared-darwin-amd64.tgz')
 assert.equal(cloudflaredAsset('win32', 'x64'), 'cloudflared-windows-amd64.exe')
-assert.throws(() => cloudflaredAsset('linux', 'x64'), /unsupported/)
+assert.equal(cloudflaredAsset('linux', 'x64'), 'cloudflared-linux-amd64')
+assert.equal(cloudflaredAsset('linux', 'arm64'), 'cloudflared-linux-arm64')
+assert.throws(() => cloudflaredAsset('linux', 'riscv64'), /unsupported.*cloudflaredPath/)
 
 const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'dsh-cloudflared-binary-'))
 const assetName = cloudflaredAsset('win32', 'x64')
@@ -23,6 +25,41 @@ const fetchImpl = async (url) => {
   return new Response(binary, { status: 200 })
 }
 try {
+  for (const arch of ['x64', 'arm64']) {
+    const linuxName = cloudflaredAsset('linux', arch)
+    const cacheDir = path.join(temp, `linux-${arch}`)
+    let downloads = 0
+    const options = { cacheDir, platform: 'linux', arch,
+      releaseDigests: { [linuxName]: digest }, binaryDigests: { [linuxName]: digest },
+      fetchImpl: async (url) => {
+        downloads += 1
+        assert.equal(url, `https://github.com/cloudflare/cloudflared/releases/download/2026.9.3/${linuxName}`)
+        return new Response(binary, { status: 200 })
+      },
+    }
+    const file = await ensureCloudflared(options)
+    assert.equal(path.basename(file), `2026.9.3-linux-${arch}`)
+    assert.deepEqual(await fs.readFile(file), binary)
+    if (process.platform !== 'win32') assert.equal((await fs.stat(file)).mode & 0o777, 0o700)
+    assert.equal(await ensureCloudflared(options), file)
+    assert.equal(downloads, 1)
+    await fs.writeFile(file, 'corrupt Linux cache')
+    assert.equal(await ensureCloudflared(options), file)
+    assert.deepEqual(await fs.readFile(file), binary)
+    assert.equal(downloads, 2)
+    const rejectedDir = path.join(temp, `linux-${arch}-bad`)
+    await assert.rejects(ensureCloudflared({ ...options, cacheDir: rejectedDir,
+      releaseDigests: { [linuxName]: '0'.repeat(64) },
+    }), /checksum mismatch/)
+    assert.deepEqual(await fs.readdir(rejectedDir), [])
+    await assert.rejects(ensureCloudflared({ ...options, cacheDir: rejectedDir,
+      binaryDigests: { [linuxName]: '0'.repeat(64) },
+    }), /executable checksum mismatch/)
+    assert.deepEqual(await fs.readdir(rejectedDir), [])
+  }
+  assert.equal(await ensureCloudflared({ platform: 'linux', arch: 'riscv64', executable: '/opt/bin/cloudflared',
+    fetchImpl: () => { throw new Error('custom executable must not download') },
+  }), '/opt/bin/cloudflared')
   const installedDir = path.join(temp, 'external')
   await fs.mkdir(installedDir)
   const externalBinary = path.join(installedDir, 'cloudflared.exe')

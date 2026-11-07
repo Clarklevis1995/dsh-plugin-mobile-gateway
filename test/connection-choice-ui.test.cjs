@@ -6,7 +6,7 @@ const vm = require('node:vm')
 const React = require('react')
 const { create, act } = require('react-test-renderer')
 
-function loadPanel(locale = 'zh', statusOverrides = {}) {
+function loadPanel(locale = 'zh', statusOverrides = {}, languageSettings = {}) {
   let api, sequence = 0, failSave = false, failStatus = false, statusGate = null, saveGate = null
   const calls = [], timers = new Map(), timeouts = new Map()
   let status = {
@@ -18,7 +18,15 @@ function loadPanel(locale = 'zh', statusOverrides = {}) {
     ...statusOverrides,
   }
   const fetch = async (url, options = {}) => {
-    calls.push({ url, options })
+    const rawUrl = url
+    const base = new URL(document.baseURI)
+    const target = new URL(url, base)
+    const prefix = new URL('.', base).pathname.replace(/\/$/, '')
+    url = target.pathname.startsWith(`${prefix}/mgw/`) ? target.pathname.slice(prefix.length) : target.pathname
+    calls.push({ url, rawUrl, options })
+    if (target.origin !== base.origin || target.pathname !== `${prefix}${url}`) {
+      return { ok: false, status: 404, json: async () => ({ message: 'Not found' }) }
+    }
     let data = {}, ok = true
     if (url === '/mgw/status') {
       const gate = statusGate; statusGate = null
@@ -54,8 +62,11 @@ function loadPanel(locale = 'zh', statusOverrides = {}) {
     }
     return { ok, json: async () => data }
   }
+  const storage = languageSettings.storage || new Map()
+  const localeListeners = new Set(), disposers = []
+  let hostSnapshot = { active: languageSettings.hostLocale, revision: 0 }
   const window = {
-    __MGW_UI_LOCALE__: locale, localStorage: { getItem: () => null, setItem() {} },
+    __MGW_UI_LOCALE__: locale, localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) },
     location: { protocol: 'http:', host: '127.0.0.1:3080' },
     setInterval: (fn) => { const id = ++sequence; timers.set(id, fn); return id },
     clearInterval: id => timers.delete(id),
@@ -63,11 +74,25 @@ function loadPanel(locale = 'zh', statusOverrides = {}) {
     matchMedia: () => ({ matches: true }),
     __ModuleLoader__: { load: ({ factory }) => { api = factory(name => { assert.equal(name, 'react'); return React }) } },
   }
-  const document = { hidden: true, getElementById: () => ({ focus() {} }), addEventListener() {}, removeEventListener() {}, activeElement: null }
+  const document = { baseURI: languageSettings.baseURI || 'http://127.0.0.1:3080/', hidden: true, getElementById: () => ({ focus() {} }), addEventListener() {}, removeEventListener() {}, activeElement: null, createElement: () => ({ remove() {} }), head: { appendChild() {} } }
   const file = process.env.MGW_CLIENT_SOURCE || path.join(__dirname, '../lib/client.js')
-  const source = fs.readFileSync(file, 'utf8').replace('    return module.exports', '    exports.testing = { DevicePanel, pairingConnectionPlan, recommendConnection, ConnectionChoiceGuide, ConnectionPlanSummary, GatewaySelect, panelCss, styles, colors }; return module.exports')
+  const source = fs.readFileSync(file, 'utf8').replace('    return module.exports', '    exports.testing = { request, DevicePanel, pairingConnectionPlan, recommendConnection, ConnectionChoiceGuide, ConnectionPlanSummary, GatewaySelect, panelCss, styles, colors, FooterButton }; return module.exports')
   vm.runInNewContext(source, { window, document, navigator: { language: locale, userAgent: 'test' }, fetch, URL, AbortController, console, setTimeout, clearTimeout })
-  return { ...api.testing, calls, timers, timeouts, failNextSave() { failSave = true },
+  if (languageSettings.hostLocale !== undefined) api.apply({
+    locale: {
+      getSnapshot: () => hostSnapshot,
+      subscribe: listener => { localeListeners.add(listener); return () => localeListeners.delete(listener) },
+    },
+    effect(fn) { disposers.push(fn()) },
+    slots: { inject(_key, fn) { fn() }, register() {} },
+  })
+  return { ...api.testing, calls, timers, timeouts, storage, localeListeners,
+    setHostLocale(active) {
+      hostSnapshot = { active, revision: hostSnapshot.revision + 1 }
+      for (const listener of localeListeners) listener()
+    },
+    dispose() { for (const dispose of disposers.reverse()) dispose?.() },
+    failNextSave() { failSave = true },
     failNextStatus() { failStatus = true },
     updateStatus(update) { status = { ...status, ...update } },
     delayNextStatus() { let release; statusGate = new Promise(resolve => { release = resolve }); return release },
@@ -76,6 +101,51 @@ function loadPanel(locale = 'zh', statusOverrides = {}) {
 }
 
 const rtc = { webrtc: { enabled: true, mode: 'prefer-webrtc', runtime: 'available' } }
+
+test('gateway requests resolve all management routes against the DSH document base', async () => {
+  const routes = ['/mgw/status', '/mgw/devices', '/mgw/network-test', '/mgw/tools/restart',
+    '/mgw/public-setup', '/mgw/connection', '/mgw/cloudflare', '/mgw/cloudflare/check',
+    '/mgw/cloudflare/restart', '/mgw/pair', '/mgw/gateway', '/mgw/auth',
+    '/mgw/devices/device%2Fid/revoke']
+  for (const [baseURI, prefix] of [
+    ['https://nas.example/', ''],
+    ['https://nas.example/app/deepseek/', '/app/deepseek'],
+    ['https://nas.example/proxy/nested/dsh/', '/proxy/nested/dsh'],
+    ['https://nas.example/app/dsh/?token=test#/chat/42', '/app/dsh'],
+    ['https://nas.example/app/dsh/index.html', '/app/dsh'],
+    ['https://nas.example/app/%E6%B7%B1%E5%BA%A6/', '/app/%E6%B7%B1%E5%BA%A6'],
+  ]) {
+    const api = loadPanel('zh', {}, { baseURI })
+    const controller = new AbortController()
+    for (const route of routes) {
+      const options = route === '/mgw/status' || route === '/mgw/devices' ? {} : {
+        method: 'POST', body: JSON.stringify({ route: 'lan', publicUrl: 'ws://10.23.45.67:3081/ws/mobile' }),
+        headers: { 'Content-Type': 'application/json' }, signal: controller.signal,
+      }
+      await api.request(route, options)
+      const call = api.calls.at(-1)
+      assert.equal(new URL(call.rawUrl, baseURI).href, `https://nas.example${prefix}${route}`)
+      assert.equal(call.options.credentials, 'same-origin')
+      for (const [key, value] of Object.entries(options)) assert.equal(call.options[key], value)
+    }
+  }
+})
+
+test('device panel loads and pairs through a reverse proxy subpath', async () => {
+  const baseURI = 'https://nas.example/app/deepseek/'
+  const api = loadPanel('zh', {}, { baseURI })
+  let root
+  try {
+    await act(async () => { root = create(React.createElement(api.DevicePanel)) })
+    assert.equal(root.root.findByProps({ id: 'mgw-pairing-url' }).props.value, 'ws://10.23.45.67:3081/ws/mobile')
+    await act(async () => actionButton(root, 'pair').props.onClick())
+    for (const route of ['/mgw/devices', '/mgw/status', '/mgw/pair']) {
+      assert.ok(api.calls.some(call => call.rawUrl === `${baseURI}${route.slice(1)}`), route)
+    }
+  } finally {
+    if (root) await act(async () => root.unmount())
+  }
+})
 
 test('switching connection modes fills the matching address and pairs with it', async () => {
   const lan = 'ws://10.23.45.67:3081/ws/mobile'
@@ -196,7 +266,8 @@ test('recommendations cover LAN, Tailscale, public servers and unavailable entri
   assert.equal(recommend(noTail, status).route, 'cloudflare')
   assert.equal(recommend({ ...noTail, network: 'unknown' }, status).route, 'cloudflare')
   const server = { ...noTail, host: 'server' }
-  assert.match(recommend(server, status).title, /配置服务器/)
+  assert.equal(recommend(server, status).route, 'cloudflare')
+  assert.match(recommend(server, { cloudflare: { supported: false } }).title, /配置服务器/)
   assert.equal(recommend(server, status, 'wss://server.example/ws/mobile').address, 'wss://server.example/ws/mobile')
   assert.equal(recommend(noTail, status, 'wss://host.tailnet.ts.net/ws/mobile').route, 'cloudflare')
   assert.match(recommend(noTail, { cloudflare: { supported: false } }).title, /安装并配置 Tailscale/)
@@ -206,6 +277,22 @@ test('recommendations cover LAN, Tailscale, public servers and unavailable entri
   const tunnel = recommend(noTail, readyTunnel, readyTunnel.cloudflare.publicUrl)
   assert.equal(tunnel.route, 'cloudflare')
   assert.match(tunnel.next, /Quick Tunnel/)
+})
+
+test('Linux NAS exposes Cloudflare and recommends it without an existing public endpoint', async () => {
+  const api = loadPanel('zh', { platform: 'linux', publicUrl: '', cloudflare: { supported: true, enabled: false } })
+  const plan = api.recommendConnection({ network: 'remote', host: 'server', tailscale: 'no' },
+    { platform: 'linux', cloudflare: { supported: true, enabled: false } })
+  assert.equal(plan.route, 'cloudflare')
+  assert.match(plan.next, /Quick Tunnel/)
+  let root
+  try {
+    await act(async () => { root = create(React.createElement(api.DevicePanel)) })
+    const select = root.root.findAllByType(api.GatewaySelect).find(node => node.props['aria-label'] === '连接方案')
+    assert.ok(React.Children.toArray(select.props.children).some(node => node.props.value === 'cloudflare'))
+  } finally {
+    if (root) await act(async () => root.unmount())
+  }
 })
 
 test('English wizard is translated and does not apply until the user accepts', async () => {
@@ -637,4 +724,54 @@ test('wizard modal traps keyboard focus and closes without saving or closing the
   assert.equal(api.calls.filter(call => call.url === '/mgw/connection').length, 0)
   assert.equal(root.root.findAllByProps({ id: 'mgw-manual-route' }).length, 1)
   await act(async () => root.unmount())
+})
+
+
+test('language follows DSH live and manual choices preserve open panel drafts', async () => {
+  const api = loadPanel('zh', {}, { hostLocale: 'en' })
+  let root
+  await act(async () => { root = create(React.createElement(React.Fragment, null,
+    React.createElement(api.DevicePanel), React.createElement(api.FooterButton, { wide: true }))) })
+  const language = () => root.root.findAllByType(api.GatewaySelect).find(node => node.props['data-ui-language'])
+  assert.equal(language().props.value, 'system')
+  assert.equal(language().props['aria-label'], 'Interface language')
+  assert.equal(root.root.findAllByType('button').some(node => node.props['aria-label'] === 'whaleness Mobile Devices'), true)
+  const address = () => root.root.findByProps({ id: 'mgw-pairing-url' })
+  await act(async () => address().props.onChange({ target: { value: 'wss://draft.example/ws/mobile' } }))
+  await act(async () => api.setHostLocale('ja-JP'))
+  assert.equal(language().props['aria-label'], '表示言語')
+  assert.equal(root.root.findAllByType('button').some(node => node.props['aria-label'] === 'whaleness モバイルデバイス'), true)
+  assert.equal(address().props.value, 'wss://draft.example/ws/mobile')
+  await act(async () => language().props.onChange({ target: { value: 'en' } }))
+  assert.equal(api.storage.get('mobile-gateway-ui-locale'), 'en')
+  await act(async () => api.setHostLocale('zh-CN'))
+  assert.equal(language().props['aria-label'], 'Interface language')
+  await act(async () => language().props.onChange({ target: { value: 'system' } }))
+  assert.equal(language().props['aria-label'], '界面语言')
+  assert.equal(address().props.value, 'wss://draft.example/ws/mobile')
+  assert.equal(api.localeListeners.size, 1)
+  await act(async () => root.unmount())
+  api.dispose()
+  assert.equal(api.localeListeners.size, 0)
+})
+
+test('language persists across reloads and unsupported DSH locales use English', async () => {
+  const storage = new Map([['mobile-gateway-ui-locale', 'ja']])
+  const api = loadPanel('zh', {}, { hostLocale: 'en', storage })
+  let root
+  await act(async () => { root = create(React.createElement(api.DevicePanel)) })
+  const language = () => root.root.findAllByType(api.GatewaySelect).find(node => node.props['data-ui-language'])
+  assert.equal(language().props['aria-label'], '表示言語')
+  await act(async () => language().props.onChange({ target: { value: 'system' } }))
+  await act(async () => api.setHostLocale('fr'))
+  assert.equal(language().props['aria-label'], 'Interface language')
+  await act(async () => root.unmount())
+  api.dispose()
+  const reloaded = loadPanel('zh', {}, { hostLocale: 'ja', storage })
+  await act(async () => { root = create(React.createElement(reloaded.DevicePanel)) })
+  const selector = root.root.findAllByType(reloaded.GatewaySelect).find(node => node.props['data-ui-language'])
+  assert.equal(selector.props.value, 'system')
+  assert.equal(selector.props['aria-label'], '表示言語')
+  await act(async () => root.unmount())
+  reloaded.dispose()
 })

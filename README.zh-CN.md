@@ -8,6 +8,8 @@
 
 # dsh-plugin-mobile-gateway
 
+> **v0.12.0 · 待发布** — 适配 DSH 0.2.2-rc.1，需要 Node.js 24.9+。新增聊天引用、宿主级自动化任务、插件更新与详情、跟随 DSH 的界面语言切换，并修复批量投影和图片读取兼容性。完整内容见 [版本记录](CHANGELOG.md) 与 [移动端适配说明](docs/dsh-0.2.2-rc.1-mobile-integration.md)。
+
 > 当前源码增加实验性 **P2P 优先** 传输：开启 `webrtc.enabled` 后，支持该能力的新客户端通过现有鉴权 WebSocket 协商双 WebRTC DataChannel，准备失败整组回退 WebSocket。首次使用默认“局域网直连”，通过同一 Wi-Fi 下的主机地址使用 WebSocket；可在“连接与配对 → 连接方案”主动选择“公网入口 + 优先 P2P（实验）”或其他方案，已保存的选择会保留；旧客户端保持原行为。**网关可联调，Android/iOS App 待接入，尚未发布**。详见 [App 接入契约](docs/webrtc-app-integration.md)、[运行库决策](docs/webrtc-runtime-decision.md) 和 [验收记录](docs/webrtc-acceptance.md)。
 
 
@@ -15,11 +17,11 @@ DeepSeek Harness 的第三方设备鉴权移动网关，支持会话与实时事
 
 > 当前源码以 **DSH 0.2.2-rc.1** 为适配基线，需要 Connection Peer 接口，使用 Session format 4；旧版历史游标需重新取得基线。
 >
-> 当前未发布源码新增有序聊天引用、宿主级自动化任务和插件更新，适配批量投影与图片读取。需要 Node.js 24.9+。移动端按 [0.2.2-rc.1 详细接入说明](docs/dsh-0.2.2-rc.1-mobile-integration.md) 实施。
+> v0.12.0 新增有序聊天引用、宿主级自动化任务、插件更新与详情、DSH 语言同步，适配批量投影与图片读取。需要 Node.js 24.9+。移动端按 [0.2.2-rc.1 详细接入说明](docs/dsh-0.2.2-rc.1-mobile-integration.md) 实施。
 >
 > 实时流已改为独立 `assistant-stream` 帧，移动端需要按 [rc.2 接入说明](docs/dsh-rc2-mobile-integration.md) 更新订阅、缓存与分页处理。当前修改尚未发布。
 >
-> v0.11.1（当前源码，尚未发布）：新增普通文件分块上传，支持 SHA-256 校验、进度确认、取消与断线清理，复用 DSH 官方附件存储和会话专属凭证，支持文件随消息发送及实时和历史文件引用。App 需按 `file-upload-v1` 能力接入，详见 [移动端普通文件上传对接指南](docs/file-upload-app-integration.md)。
+> v0.11.1：新增普通文件分块上传，支持 SHA-256 校验、进度确认、取消与断线清理，复用 DSH 官方附件存储和会话专属凭证，支持文件随消息发送及实时和历史文件引用。App 需按 `file-upload-v1` 能力接入，详见 [移动端普通文件上传对接指南](docs/file-upload-app-integration.md)。
 >
 > v0.11.0：新增智能体团队与子会话协议，支持团队成员、共享任务看板、多层子智能体目录和运行状态实时同步，以及子智能体独立历史、视图切换、继续对话、图片输入与停止执行。APP 需按能力发现接入，详见 [智能体团队 APP 详细接入指南](docs/agent-team-app-integration.md)。
 >
@@ -38,6 +40,8 @@ DeepSeek Harness 的第三方设备鉴权移动网关，支持会话与实时事
 > v0.7.3：优化移动网关运行模式下拉框的箭头间距。
 >
 > v0.7.2：新增独立对话/控制连接、空 Session 创建、停止生成与稍后继续、排队消息同步及编辑/删除/Steer，以及 Session 归档和重命名的双向同步。
+
+插件面板的“通用设置 → 界面语言”支持跟随 DSH、简体中文、English 和日本語。默认跟随 DSH 的语言设置并即时更新，DSH 其他语言使用英文显示。手动选择保存在当前浏览器中，已有语言偏好会保留。
 
 ## 协议与 DSH 兼容层
 
@@ -275,9 +279,9 @@ http://127.0.0.1:<本地端口>
 
 二维码只能使用一次，并会在 5 分钟后过期；超时后在 WebUI 重新生成即可。
 
-## Windows / macOS 家用电脑远程连接
+## Windows / macOS / Linux 远程连接
 
-家用电脑通常没有固定公网 IP，不建议配置路由器端口转发。Windows / macOS 面板提供两种可选入口：无需账户或域名的 Quick Tunnel，以及使用固定域名的命名 Tunnel。插件会在首次开启时自动下载并校验 Cloudflare 官方 `cloudflared`，保存在当前用户的缓存目录；无需手动安装系统服务。
+家用电脑通常没有固定公网 IP，不建议配置路由器端口转发。Windows / macOS / Linux 面板提供两种可选入口：无需账户或域名的 Quick Tunnel，以及使用固定域名的命名 Tunnel。插件会在首次开启时自动下载并校验 Cloudflare 官方 `cloudflared`，保存在当前用户的缓存目录；无需手动安装系统服务。Linux x64、arm64 使用固定的 [Cloudflare 2026.9.3 官方发布版本](https://github.com/cloudflare/cloudflared/releases/tag/2026.9.3)独立二进制，并核对 SHA-256。其他 Linux 架构或需要复用已有安装时，将 `cloudflaredPath` 设为可执行文件的绝对路径；默认不会搜索 PATH。
 
 使用前先启动 `dsh web`。电脑必须保持开机、联网且 DSH 进程运行；休眠或进程退出后外网连接会中断。
 
@@ -336,8 +340,8 @@ Tailscale Serve 只允许同一 Tailnet 中符合访问规则的设备连接，�
 | 同一局域网 | 插件局域网入口 | `ws://<电脑局域网 IP>:3081/ws/mobile` | 无需 Helper 或 Nginx；电脑与手机 位于可互访的局域网 | 仅对私有网络放行 TCP `3081`；保持鉴权开启 |
 | 本机 iOS 模拟器 | DSH WebUI 本地入口 | `ws://127.0.0.1:<DSH WebUI 端口>/ws/mobile` | 无需 Helper、Nginx 或独立的 `3081` 端口 | 不开放任何外部端口；仅 Debug 时可关闭鉴权 |
 | Linux 公网服务器 | 插件 Helper + Nginx + TLS | `wss://<服务器公网 IPv4>/ws/mobile` | 执行 `init`，再从 WebUI 填写公网 IPv4 | 云安全组放行 TCP `80/443`；不要公开 DSH 端口和 `3081`；必须鉴权 |
-| 家用 Windows / macOS | Cloudflare 命名 Tunnel | `wss://<公开域名>/ws/mobile` | 在 Cloudflare 建立公开域名到 `127.0.0.1:3082` 的路由；面板填写域名与 Token 并开启 | 无需路由器端口转发；独立入口强制设备鉴权 |
-| 家用 Windows / macOS | Cloudflare Quick Tunnel | `wss://<随机名称>.trycloudflare.com/ws/mobile` | 面板一键开启；重启或重连后地址变化需重新扫码 | 无需域名、账户或端口转发；独立入口强制设备鉴权 |
+| Windows / macOS / Linux | Cloudflare 命名 Tunnel | `wss://<公开域名>/ws/mobile` | 在 Cloudflare 建立公开域名到 `127.0.0.1:3082` 的路由；面板填写域名与 Token 并开启 | 无需路由器端口转发；独立入口强制设备鉴权 |
+| Windows / macOS / Linux | Cloudflare Quick Tunnel | `wss://<随机名称>.trycloudflare.com/ws/mobile` | 面板一键开启；重启或重连后地址变化需重新扫码 | 无需域名、账户或端口转发；独立入口强制设备鉴权 |
 | 家用 Windows / macOS | Tailscale Serve | `wss://<Tailscale 域名>/ws/mobile` | 手动转发到 `127.0.0.1:3081`，将生成的地址填入 WebUI | 无需路由器端口转发；保持鉴权开启 |
 
 ## Linux 服务器公网入口管理
