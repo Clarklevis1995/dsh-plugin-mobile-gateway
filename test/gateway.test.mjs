@@ -75,6 +75,11 @@ const assert = await import('node:assert/strict')
     hasMore: false, projections: { asOfSeq: 4, values: {} }, events: [{ event: delivery }] }) } }
   const page = await handleQuery(api, null, null, { type: 'history', sessionId: 's1', view: 'conversation' })
   assert.deepEqual(page.events, [delivery])
+  const changes = { type: 'workspace/changes', seq: 5, time: 5, data: { turn: 1 } }
+  api.sessions.history = async () => ({ historyFormatVersion: 4, cursor: 5, hasMore: false,
+    projections: { asOfSeq: 5, values: {} }, events: [{ event: changes }] })
+  const changedPage = await handleQuery(api, null, null, { type: 'history', sessionId: 's1', view: 'conversation' })
+  assert.deepEqual(changedPage.events, [changes])
 }
 {
   const calls = []
@@ -309,6 +314,19 @@ const ctx = {
   effect(fn) { disposer = fn() },
 }
 ctx.connection = createTestConnection()
+const changesSummary = { turn: 1, total: 1, added: 1, deleted: 1,
+  files: [{ path: '设计.md', display: '设计.md', added: 1, deleted: 1 }] }
+ctx.connection.createSharedFetchHandler = () => ({
+  async fetch(req, peer) {
+    assert.equal(peer, ctx.connection.peers[0])
+    const url = new URL(req.url)
+    if (!url.searchParams.has('seq')) return new Response('Invalid coordinates', { status: 400 })
+    if (url.searchParams.get('seq') !== '9006') return new Response('Missing record', { status: 404 })
+    return Response.json(url.pathname.endsWith('summary') ? changesSummary
+      : { kind: 'text', path: '设计.md', display: '设计.md', before: true, after: true, coarse: false,
+        hunks: [{ oldStart: 4, oldLines: 1, newStart: 4, newLines: 1, lines: ['-旧', '+新'] }] })
+  },
+})
 ctx.webServer = webServer
 const invokeCalls = []
 const controlFrames = []
@@ -325,6 +343,10 @@ ctx.typertGateway = {
     assert.equal(req.peer, ctx.connection.peers[0])
     assert.equal(req.peer.signal.aborted, false)
     invokeCalls.push(req)
+    // This fixture's Host refuses external reads; positive reads are covered by external-files.test.mjs.
+    if (req.namespace === 'workspaceFiles') {
+      throw Object.assign(new Error('Host refused external file'), { code: 'workspace-file/outside-workspace' })
+    }
     if (req.namespace === 'agentPresets' && req.method === 'select') {
       assert.equal(req.args.agentId, 'preset-session')
       presetSession.agentPreset = req.args.agentPreset
@@ -534,6 +556,14 @@ function waitFor(pred, timeout) { return new Promise((res) => { const t0 = Date.
     ] })
   assert.ok(got.find(frame => frame.kind === 'hello').capabilities.includes('file-references-v1'))
   interactionResults.push(['live delivery keeps paths and descriptions', true])
+  assert.ok(got.find(frame => frame.kind === 'hello').capabilities.includes('workspace-changes-v1'))
+  listeners['session/event']({ id: 's1' }, { type: 'workspace/changes', seq: 9006, time: 7, data: { turn: 1 } })
+  assert.equal(await waitFor(() => got.some(frame => frame.seq === 9006), 2000), true)
+  assert.deepEqual(got.find(frame => frame.seq === 9006).event, { type: 'workspace/changes', turn: 1 })
+  ws.send(JSON.stringify({ type: 'workspace-changes-summary', requestId: 'cs-live', sessionId: 's1', seq: 9006 }))
+  assert.equal(await waitFor(() => got.some(frame => frame.requestId === 'cs-live'), 2000), true)
+  assert.deepEqual(got.find(frame => frame.requestId === 'cs-live').summary, changesSummary)
+  interactionResults.push(['workspace changes live event and legacy query', true])
 
   const generatedRef = { attachmentId: 'generated-image', mediaType: 'image/png', bytes: 8, width: 1024, height: 768 }
   const generatedBlock = { type: 'image', attachment: generatedRef }
@@ -692,6 +722,14 @@ function waitFor(pred, timeout) { return new Promise((res) => { const t0 = Date.
       assert.equal(await waitFor(() => controls.some(f => f.kind === 'projection-baseline'), 2000), true)
       assert.deepEqual(controls.find(f => f.kind === 'projection-baseline').projections.s1.values.turnOutline, initialTurnOutline)
       assert.equal(conversations.some(f => f.kind === 'projection-baseline'), false)
+      const changeRequest = { type: 'workspace-changes-diff', requestId: 'cd-control', sessionId: 's1', seq: 9006, index: 0 }
+      control.send(JSON.stringify(changeRequest))
+      conversation.send(JSON.stringify({ ...changeRequest, requestId: 'cd-wrong-channel' }))
+      assert.equal(await waitFor(() => controls.some(f => f.requestId === 'cd-control')
+        && conversations.some(f => f.requestId === 'cd-wrong-channel'), 2000), true)
+      assert.equal(controls.find(f => f.requestId === 'cd-control').diff.hunks[0].oldStart, 4)
+      assert.equal(conversations.find(f => f.requestId === 'cd-wrong-channel').code, 'wrong-channel')
+
       // 大纲更新走控制连接，不受旧单连接的会话订阅过滤。
       ws.send(JSON.stringify({ type: 'subscribe', sessionId: 'another-session' }))
       assert.equal(await waitFor(() => got.some(f => f.kind === 'subscribed' && f.sessionId === 'another-session'), 2000), true)

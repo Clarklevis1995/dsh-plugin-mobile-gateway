@@ -2,20 +2,22 @@
 
 本文是本仓库当前源码的实现契约，面向 APP 网络层、数据层、聊天页和看板开发。按本文实现后，APP 可以展示 Lead 和子智能体、查看共享任务板与每个成员的任务、在成员间切换聊天视图，并向可继续对话的成员发送消息。
 
-- 编写日期：2026-10-21。
-- 网关：0.11.0 当前源码，新增能力尚未发布；运行时仍以 capability 判断是否支持。
-- 已核对的 Host：DSH **0.2.1-rc.2**，Session format **4**。
+- 编写日期：2026-10-21；RC.3 修订日期：2026-11-14。
+- 网关：0.12.1 当前源码，RC.3 修复尚未发布；运行时仍以 capability 判断是否支持。
+- 已核对的 Host：DSH **0.2.2-rc.3**，Session format **4**；兼容旧宿主成员结构。
 - WebSocket：`/ws/mobile`，子协议仍为 `dsh-mobile-v1`，`hello.protocol` 仍为 `3`。
 - 新能力：`agent-team-v1`、`subagent-conversations-v1`。
 - 本次只改网关与协议文档，APP 页面需按本文接入。
+
+> RC.3 成员来自 `subagentCatalog`，`agentTeam` 提供 `enabled/tasks/failure?`。网关补充 `members:[]` 只为旧端解码兼容。真实 App 差异及实施位置见 [RC.3 评估说明](dsh-0.2.2-rc.3-compatibility-audit.md)。
 
 ## 1. 能力边界与页面目标
 
 | APP 功能 | 本次网关支持方式 |
 |---|---|
-| 团队成员面板，包含 Lead | `agent-team` 读取 `agentTeam.members` |
+| 团队成员面板，包含 Lead | `subagents` 读取各直接父节点的 `subagentCatalog`；Lead 来自根会话上下文；旧宿主兼容 members |
 | 共享任务看板 | 同一响应中的 `agentTeam.tasks` |
-| 成员任务筛选 | 用任务 `ownerName` 匹配成员 `name`，不要匹配标题 |
+| 成员任务筛选 | 优先用 ownerId 匹配会话 ID；缺少 ID 时用 ownerName 匹配代理 name，不能匹配 label |
 | 待处理 / 进行中 / 已完成分栏 | 用任务 `status` 分组 |
 | 任务详情、依赖、写入范围、冲突提示 | 完整透传任务投影字段 |
 | 查看所有层级的普通子智能体 | 从根开始逐级查询 `subagents`，支持展开树或有界遍历 |
@@ -31,7 +33,7 @@
 
 有两类“任务”，必须在产品和数据中分开：
 
-1. **团队共享任务**：`agentTeam.tasks`，有 `id`、`revision`、`ownerName`、依赖与写入范围，属于 Lead。
+1. **团队共享任务**：`agentTeam.tasks`，有 `id`、`revision`、`ownerId/ownerName`、依赖与写入范围，属于 Lead。
 2. **成员内部待办**：`todos`，来自 `tasks` / `tasks-updated` 或成员历史投影，属于具体成员会话。它没有共享任务的身份和归属语义，不能拼入共享任务板。
 
 ## 2. 身份与地址：必须先实现
@@ -167,12 +169,8 @@ Authorization: Bearer <已配对设备 token>
   "projectionState":"ready",
   "asOfSeq":120,
   "agentTeam":{
-    "members":[
-      {"id":"session-lead","name":"lead","role":"lead","phase":"active"},
-      {"id":"session-scout","name":"footage-scout","role":"teammate","phase":"active"},
-      {"id":"session-music","name":"music-producer","role":"teammate","phase":"active"},
-      {"id":"session-graphics","name":"graphics-designer","role":"teammate","phase":"active"}
-    ],
+    "enabled":true,
+    "members":[],
     "tasks":[
       {
         "id":"task-1",
@@ -180,6 +178,7 @@ Authorization: Bearer <已配对设备 token>
         "subject":"素材勘察：11 段录屏逐帧分析 + 镜头切点",
         "description":"读取制作要求，逐帧分析录屏，输出可用于剪辑的切点清单。",
         "status":"completed",
+        "ownerId":"session-scout",
         "ownerName":"footage-scout",
         "blockedBy":[],
         "writeScopes":["promo/analysis"],
@@ -192,6 +191,7 @@ Authorization: Bearer <已配对设备 token>
         "subject":"原创配乐与音效",
         "description":"制作 48 秒配乐，输出音频文件。",
         "status":"in_progress",
+        "ownerId":"session-music",
         "ownerName":"music-producer",
         "blockedBy":[],
         "writeScopes":["promo/audio"],
@@ -222,8 +222,10 @@ Authorization: Bearer <已配对设备 token>
 |---|---|---|
 | `projectionState` | string | `ready` / `unavailable` / `migration-required` |
 | `asOfSeq` | integer，可缺省 | 当前精确投影的会话日志切点；迁移提示响应没有它 |
-| `agentTeam` | object 或 null | 当前团队完整值，原样透传 |
-| `agentTeam.failure` | string，可缺省 | Host 读取持久化团队记录出现错误；成员和任务停在最后有效状态 |
+| `agentTeam` | object 或 null | 当前团队完整值，新版由网关补兼容性空 members |
+| `agentTeam.enabled` | boolean，新版宿主提供 | Team 模式开关；关闭不表示删除任务或子代理 |
+| `agentTeam.members` | array | 新版补 []，旧版保留原数组；不是新版成员来源 |
+| `agentTeam.failure` | string，可缺省 | Host 读取持久化团队记录出现错误；任务停在最后有效状态，不代表目录也失效 |
 
 三种状态必须分别处理：
 
@@ -234,7 +236,7 @@ Authorization: Bearer <已配对设备 token>
 显示“团队数据暂不可用”，提供重试。网关 capability 存在不表示该 Host profile 安装了团队投影。
 
 ```json
-{"kind":"agent-team","sessionId":"session-lead","projectionState":"migration-required","agentTeam":{"members":[],"tasks":[]}}
+{"kind":"agent-team","sessionId":"session-lead","projectionState":"migration-required","agentTeam":{"enabled":false,"members":[],"tasks":[]}}
 ```
 
 这是 Host 返回的迁移前缓存提示，示例内容仅为示意；可以只读展示并标注待刷新，不能把它安装成带 seq 的权威基线。打开对应会话取得新基线；如果 Host 拒绝旧格式，提示在桌面端处理或升级，停止无限重试。
@@ -245,30 +247,25 @@ Authorization: Bearer <已配对设备 token>
 
 这是会话未找到，与“没有团队投影”不同。
 
-### 5.1 成员字段与界面规则
+### 5.1 当前成员来源与旧结构兼容
 
-| 字段 | 类型 | 含义 |
-|---|---|---|
-| `id` | string | 成员持久会话 ID，作为选择与缓存主键 |
-| `name` | string | 团队内成员名字，也是任务 `ownerName` 的匹配依据 |
-| `role` | string | `lead` / `teammate` |
-| `phase` | string | `provisioning` / `active` / `failed`，持久生命周期 |
-| `error` | string，可缺省 | 成员创建失败原因 |
+RC.3 从每个直接父节点的 `subagentCatalog` 构建成员，不从历史名册恢复权限：
 
-`phase` 不是运行状态。成员 UI 状态按以下规则计算：
+| 字段 | 来源和语义 |
+|---|---|
+| id | 目录节点持久会话 ID，用于导航、缓存和 ownerId 匹配 |
+| name | 可选代理身份名称；显示按 name → label → id 回退，任务匹配不能使用 label |
+| mode | continuable / one-shot / external / unknown，决定导航和写操作限制 |
+| parentSessionId | 当前目录响应的 sessionId，必须是直接父节点 |
+| running | sessions 与 session-status；未知时显示状态待同步 |
 
-```text
-phase == provisioning → 正在创建；禁用进入和发送
-phase == failed       → 创建失败；展示 error，禁用进入和发送
-phase == active       → 结合 session-status / sessions.running 显示运行中或未运行
-running 尚未知         → 显示状态未知/同步中
-```
+Lead 来自根会话上下文。各父目录保留原顺序；孙节点保留直接父关系，不混入根的直接成员。点击负责人必须能找到真实 ID 与可验证的父子地址。
 
-Lead 行也出现在成员数组中；成员总数包括 Lead，子智能体数只统计 `role == teammate`。保留 Host 数组顺序，不假设只有三名成员。当前选中高亮按 `member.id == currentTarget.sessionId` 判断。
+多层名称只在同级唯一，目录 name 是当前这一段。用于 ownerName 回退匹配的 agentName 必须是从根拼接的完整路径，例如 reviewer/checker；根为 lead，根下面第一层直接使用其 name。任一祖先或当前节点没有 name 时，按该节点 ID 作身份回退，不把 label 拼入路径，也不跨不同父节点按单段同名匹配。
 
-点击 Lead：切回普通会话地址。点击 active teammate：构造 `{sessionId:member.id,parentSessionId:leadSessionId,subagentMode:"continuable"}`。
+`enabled:true` 应允许打开空团队；有历史任务但目录为空时，也要保留看板入口。可见性结合能力、enabled、任务及可浏览子节点，不能只判断成员数或 role。enabled:false 不清空历史任务。仅有普通 Lead、未启用且无任务/子节点时可以隐藏入口。
 
-`ready` 且只有 Lead、没有任务也是合法数据；实验性投影可能对普通会话生成 Lead 行，不能仅凭存在 `agentTeam` 就显示“已有多人团队”。
+旧宿主仍可提供 members，其 id/name/role/phase/error 按原语义兼容：provisioning/failed 显示创建中/失败并限制进入，active 再结合 running。RC.3 不再投影这些历史字段，不能因其缺失判断成员损坏或自行恢复历史权限。
 
 ### 5.2 共享任务字段与看板规则
 
@@ -279,7 +276,8 @@ Lead 行也出现在成员数组中；成员总数包括 Lead，子智能体数�
 | `subject` | string | 是 | 卡片标题 |
 | `description` | string | 是 | 完整任务说明，展开显示 |
 | `status` | string | 是 | `pending` / `in_progress` / `completed`；解码应兼容 `deleted` 和未来未知值 |
-| `ownerName` | string | 否 | 当前负责人名字；缺省表示未分配 |
+| `ownerId` | string | 否 | 负责人会话 ID，身份匹配优先使用 |
+| `ownerName` | string | 否 | 保存的代理名称，可用于历史展示；缺省不代表未分配 |
 | `blockedBy` | string[] | 是 | 前置任务 ID，保留 Host 顺序 |
 | `writeScopes` | string[] | 是 | 建议写入路径/范围，作为说明展示 |
 | `ready` | boolean | 是 | Host 计算的可领取状态：仅 pending 且依赖全部完成时为 true |
@@ -293,9 +291,9 @@ Lead 行也出现在成员数组中；成员总数包括 Lead，子智能体数�
 - 当前投影通常排除 `deleted`；客户端解码保留兼容，收到后从可见列表移除。
 - `writeScopes` 是建议范围，不是权限控制；不能在 APP 中称为“强制隔离目录”。
 - `writeScopeWarnings` 非空时显示可展开提示，不替代任务状态。
-- 负责人：`members.first(name == task.ownerName)`，找不到时仍显示原 `ownerName`；不要丢弃这条任务。
-- 缺省 owner 的任务显示“未分配”，不自动归给 Lead。
-- “当前成员任务”只筛选该成员 `name`；团队看板始终能切回“全部成员”。
+- 负责人：ownerId 存在时仅按 ID 查找成员；缺少 ID 才按 ownerName 匹配代理 name。未知 ID 不得回退为另一个同名成员。找不到时显示保存的 ownerName 或 ownerId，不丢弃任务、不构造导航地址。
+- ownerId 和 ownerName 都缺省才显示“未分配”；仅有 ownerId 的任务仍是已分配，不自动归给 Lead。
+- “当前成员任务”优先按所选会话 ID 匹配 ownerId；仅缺少 ownerId 的任务回退为 ownerName 与代理 name 匹配。团队看板始终能切回“全部成员”。
 - 点击任务的负责人，可进入对应 active 成员会话；点击任务卡片主体展开详情，避免混淆两个动作。
 - 共享任务完整快照是权威值，不能只追加任务；任务移除、负责人变更、完成后重开都要反映。
 - 缓存任务主键使用 `(gatewayId, leadSessionId, task.id)`，禁止只用 `task.id`。
@@ -316,7 +314,7 @@ Lead 行也出现在成员数组中；成员总数包括 Lead，子智能体数�
   "projectionState":"ready",
   "asOfSeq":120,
   "subagentCatalog":[
-    {"id":"session-scout","mode":"continuable","label":"逐帧分析 11 段录屏","createdAt":1792550400000},
+    {"id":"session-scout","name":"footage-scout","mode":"continuable","label":"逐帧分析 11 段录屏","createdAt":1792550400000},
     {"id":"session-review","mode":"one-shot","label":"检查分镜","createdAt":1792550401000},
     {"id":"remote-run","mode":"external","label":"远程执行","createdAt":1792550402000},
     {"id":"session-old","mode":"unknown","createdAt":1792550403000}
@@ -333,7 +331,7 @@ Lead 行也出现在成员数组中；成员总数包括 Lead，子智能体数�
 | `external` | 无本地子会话 | 否 | 展示目录元信息，禁用本地聊天导航 |
 | `unknown` | 可按 unknown 地址尝试读取 | 否，直到身份明确 | 先只读，读取历史中 `projections.values.subagent` 后确认实际模式 |
 
-目录字段 `label` 是创建任务标签；只有 continuable 保证存在。它不同于团队成员 `name`。`createdAt` 是毫秒时间戳，不能当排序序号或 seq。
+目录可选 `name` 是代理身份名称，`label` 是创建任务描述，不能相互替代。显示按 name → label → id 回退；缺少 name 的旧目录用 id 作为身份回退，任务名称匹配不能使用 label。`createdAt` 是毫秒时间戳，不能当排序序号或 seq。
 
 `subagents` 不提供 `hasChildren`，也不自动递归。实现“全部子智能体”可以使用以下策略：
 
@@ -345,7 +343,7 @@ Lead 行也出现在成员数组中；成员总数包括 Lead，子智能体数�
 6. 不要把所有层级都挂到根下面。构造导航地址时，直接父 ID 就是该次目录响应的 `sessionId`。
 7. 接到某父节点 `subagents-updated` 后整体替换该父节点子列表。未返回的旧节点从该目录移除，不等于用户会话被删除。
 
-普通子智能体的任务标签来自目录 `label`，其内部待办来自该子会话 `todos`；不要捏造共享任务。团队成员面板和普通子智能体树可以共用目标模型，但各自的数据来源要保留。
+普通子智能体的任务标签来自目录 `label`，其内部待办来自该子会话 `todos`；不要捏造共享任务。新版团队与普通子智能体共用目录模型；共享任务另从 agentTeam.tasks 读取。
 
 ## 7. 全局实时团队同步
 
@@ -363,7 +361,7 @@ control 连接初始化会收到：
         "todos":null,
         "goal":null,
         "turnOutline":[],
-        "agentTeam":{"members":[{"id":"session-lead","name":"lead","role":"lead","phase":"active"}],"tasks":[]},
+        "agentTeam":{"enabled":true,"members":[],"tasks":[]},
         "subagentCatalog":[],
         "subagent":null,
         "subagentTiming":null
@@ -373,7 +371,7 @@ control 连接初始化会收到：
 }
 ```
 
-示例展示一个仅 Lead 的团队。真实基线可以同时包含很多会话，其中也可能包含当前正在查看的子会话。
+示例展示已开启但尚无子代理和任务的空团队，应保留入口。真实基线可以同时包含很多会话，其中也可能包含当前正在查看的子会话。
 
 新增控制投影键：
 
@@ -396,10 +394,8 @@ Host 控制流重新建立时，网关发送新 `projection-baseline`，并为�
   "sessionId":"session-lead",
   "asOfSeq":121,
   "agentTeam":{
-    "members":[
-      {"id":"session-lead","name":"lead","role":"lead","phase":"active"},
-      {"id":"session-scout","name":"footage-scout","role":"teammate","phase":"active"}
-    ],
+    "enabled":true,
+    "members":[],
     "tasks":[]
   }
 }
@@ -410,7 +406,7 @@ Host 控制流重新建立时，网关发送新 `projection-baseline`，并为�
 其他帧结构：
 
 ```json
-{"kind":"subagents-updated","sessionId":"session-lead","asOfSeq":122,"subagentCatalog":[{"id":"session-scout","mode":"continuable","label":"逐帧分析","createdAt":1792550400000}]}
+{"kind":"subagents-updated","sessionId":"session-lead","asOfSeq":122,"subagentCatalog":[{"id":"session-scout","name":"footage-scout","mode":"continuable","label":"逐帧分析","createdAt":1792550400000}]}
 ```
 
 ```json
@@ -456,7 +452,7 @@ Host 控制流重新建立时，网关发送新 `projection-baseline`，并为�
 - 重连或 APP 回前台后重新查询 `sessions`。
 - 查询期间缓存新到的 `session-status`，先安装列表结果，再覆盖查询期间收到的状态，避免较早列表快照覆盖较新通知。
 - Host 创建/释放成员 Agent 或移除驻留 Session 时网关也会同步状态；`running:false` 只表示当前没有运行，不表示任务完成、成员删除或无法恢复。
-- `phase:failed`、`phase:provisioning` 优先于运行状态展示。
+- 旧宿主成员的 phase:failed/provisioning 优先于运行状态；RC.3 目录不提供这两个历史状态。
 
 ### 7.4 顺序、缓存与版本
 
@@ -694,7 +690,7 @@ APP 可以提供两个入口，语义要明确：
 
 给成员发送一段文本不会由网关自动新建共享任务，也不会自动改变 owner。APP 可以预填指令，但要让用户看到实际发送给哪个会话。
 
-创建新团队前先查询现有 `agent-presets`，由用户选择 Host 实际返回的团队模式 ID，再使用现有 `session-create` / 空会话 `select-agent-preset` 流程。不要硬编码实验性 preset ID；模式选择细节见 [会话模式接入](session-agent-preset-app-integration.md)。
+RC.3 Team 按根会话开启，不能把 agent-preset 选择等同于开启 Team。宿主提供 `agentTeams/setEnabled(agentId, enabled)`；当前网关通过可选能力 `agent-team-mode-v1` 提供移动写接口，见文末「移动端 Team 模式开关」；未声明此能力的旧网关仍需先在宿主开启，不能只修改本地 enabled。旧宿主实际返回 preset 时仍按 [会话模式接入](session-agent-preset-app-integration.md) 处理，不硬编码 ID。
 
 ## 11. 停止与继续
 
@@ -778,10 +774,14 @@ onConversation(frame):
 业务层计算：
 
 ```text
-currentMember = team.members.find(id == currentTarget.sessionId)
-currentMemberTasks = team.tasks.filter(ownerName == currentMember.name)
-unassignedTasks = team.tasks.filter(ownerName 缺省)
-memberStatus = phase != active ? phase : running已知 ? running/inactive : unknown
+currentMember = directoryMembers.find(id == currentTarget.sessionId)
+currentMemberTasks = team.tasks.filter(
+  ownerId 存在 ? ownerId == currentTarget.sessionId
+               : currentMember 存在 && ownerName == currentMember.agentName)
+unassignedTasks = team.tasks.filter(ownerId 缺省 && ownerName 缺省)
+showTeamEntry = 支持团队 && (team.enabled == true || team.tasks 非空)
+               || 存在可浏览成员
+memberStatus = 旧成员phase非active ? phase : running已知 ? running/inactive : unknown
 ```
 
 实现时 `currentMember == null` 要有兜底，可能正在看普通子智能体或旧成员数据。点击任务 owner 找不到成员时只展示名字，不构造不存在的导航地址。
@@ -834,12 +834,12 @@ Host 的错误码可能扩展，未识别错误也要展示 message 并允许用
 
 与用户提供的 WebUI 对齐，可按以下页面实现：
 
-1. **聊天顶部团队按钮**：展示子成员数量。当前普通会话只存在 Lead 时可收起入口。
-2. **团队面板**：上半部成员列表，显示 name、运行/创建状态、当前会话标记；下半部共享任务。
+1. **聊天顶部团队按钮**：展示子成员数量；enabled 团队或有历史共享任务时，即使没有子成员也保留入口。普通空会话可收起。
+2. **团队面板**：上半部成员列表，显示 name、运行状态（旧宿主兼容创建状态）、当前会话标记；下半部共享任务。
 3. **共享看板**：全部/当前成员/未分配筛选，三状态分栏；卡片显示标题、负责人、写入范围、状态。
 4. **任务详情**：完整描述、依赖、ready、写入范围、警告、任务 ID 与 revision。失败数据保持可读。
 5. **成员聊天页**：面包屑保留 Lead 标题与成员名，输入框明确目标，运行时提供停止。
-6. **普通子智能体树**：展示 label、mode，展开加载后代；外部节点和只读模式标识清楚。
+6. **普通子智能体树**：展示 name、label、mode，展开加载后代；外部节点和只读模式标识清楚。
 7. **后台交互提示**：其他成员等待提问或审批时提供可定位入口。
 
 成员自己的内部待办可以放在该成员聊天页的“待办”面板，不混入共享看板。切换成员不切换 TeamContext，不关闭 control，不清除其他成员草稿。
@@ -888,7 +888,12 @@ B ← 新 subscribed / 新 session-snapshot
 | 任务未分配 / owner 暂找不到 | 仍然展示，不自动归属 Lead |
 | 依赖未完成 | pending 且 !ready 显示受阻 |
 | 任务被删除、重开、重新分配 | 完整替换正确，无旧 owner 或重复任务残留 |
-| 成员正在创建/创建失败 | 按 phase 展示，禁用不可进入的目标 |
+| 旧宿主成员正在创建/创建失败 | 按 phase 展示，禁用不可进入的目标 |
+| enabled=true、目录和任务都空 | 保留团队入口，展示空团队 |
+| 有任务、没有成员目录 | 看板仍可进入，不因 members=[] 隐藏 |
+| name 与 label 不同 | 标题展示 name，描述展示 label，任务正确关联 |
+| 仅 ownerId / 仅 ownerName / 两者都无 | ID 优先、名称兼容，仅都无时未分配 |
+| ownerId 未知但有其他同名成员 | 不跳转错误成员，保留 ownerName 或 ID |
 | 子会话发文本和图片 | 路由给正确成员，Lead 不收到误发文本 |
 | 成员 queue / steer | 回执正确，实际执行由 Host 事件体现 |
 | 停止后继续 | 停止保留成员与任务，再发消息可按 Host 条件继续 |
@@ -929,7 +934,7 @@ npm test
 DSH_INSTALL_ROOT=/absolute/path/to/@deepseek-ai/dsh node test/agent-team-official.test.mjs
 ```
 
-该契约测试使用官方 Gateway、Connection 和生成的严格描述符，业务服务为测试替身；不能替代 APP 与真实团队运行的人工联调。最终按第 18 节逐项验收。
+该契约测试使用官方 Gateway、Connection、严格描述符和官方团队投影定义生成的无 members 数据；业务服务仍为替身，不能替代 APP 与真实团队运行的人工联调。最终按第 18 节逐项验收。
 
 ## 20. 交给 APP 开发者的实施顺序
 
@@ -943,3 +948,19 @@ DSH_INSTALL_ROOT=/absolute/path/to/@deepseek-ai/dsh node test/agent-team-officia
 8. 实现重连刷新、错误降级和全部验收用例。
 
 本期完成后，APP 的团队浏览、成员聊天与共享看板可以与 WebUI 使用同一份 Host 数据；后续若需要原生拖拽分配、直接编辑任务等操作，需要另外设计并实现 Host 有授权语义的变更接口，不能由 APP 本地修改投影来冒充执行成功。
+
+## 移动端 Team 模式开关（agent-team-mode-v1）
+
+RC.2 及以后的 Host 额外声明 `agent-team-mode-v1`。仅根会话可使用 control 请求：
+
+```json
+{"type":"agent-team-set-enabled","sessionId":"ROOT_ID","requestId":"unique-id","enabled":true}
+```
+
+参数严格限定上述四项，不接受子代理地址。网关复用认证 Peer 调用官方 `agentTeams.setEnabled({agentId,enabled})`，与同一会话的 prompt/preset 保序。宿主持久化完成后再读取真实团队投影，成功回执为：
+
+```json
+{"kind":"agent-team-mode-set","sessionId":"ROOT_ID","requestId":"unique-id","agentTeam":{"enabled":true,"tasks":[],"members":[]},"asOfSeq":42,"projectionState":"ready"}
+```
+
+错误回显 `requestType=agent-team-set-enabled`、sessionId 和 requestId。持久化失败、投影不可确认或权限拒绝均不能当作保存成功。开关以宿主投影为准，不乐观切换；超时或断线后重新查询，不自动重放写入。旧网关无此能力时隐藏可写入口。关闭不会停止或删除子代理，也不删除历史任务。已有 `modelSelection.lastUsed` 的会话关闭前应确认；确认必须绑定原根会话 ID。新对话先创建真实根会话再配置，开关不是全局默认设置。

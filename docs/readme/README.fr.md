@@ -8,7 +8,7 @@
 
 # dsh-plugin-mobile-gateway
 
-> **v0.12.0 · publication en préparation** — Compatible avec DSH 0.2.2-rc.1 et Node.js 24.9+. Ajoute les citations, la gestion des tâches planifiées du Host, les mises à jour et détails des plugins, et un choix de langue suivant DSH. Corrige les projections groupées et la lecture des images. [Historique](../../CHANGELOG.md) · [Intégration mobile](../dsh-0.2.2-rc.1-mobile-integration.md)
+> **v0.12.1 · publication en préparation** — Compatible avec DSH 0.2.2-rc.3 et Node.js 24.9+. Corrige les projections d’équipe et la poursuite/interruption des sous-agents ; ajoute le contrôle du mode Team par session. [Changelog](../../CHANGELOG.md) · [RC.3 / App](../dsh-0.2.2-rc.3-compatibility-audit.md)
 
 Passerelle mobile tierce pour DeepSeek Harness avec authentification des appareils. Sessions et événements en direct, messages en attente avec édition/suppression/Steer, archivage et renommage bidirectionnels, arrêt/reprise de génération, tâches et Goal courant, menus de commandes et compétences fournis par le serveur, intervention humaine, images et fichiers. L’installation ajoute Appareils mobiles dans WebUI pour activer la passerelle, générer les QR et gérer les appareils approuvés.
 

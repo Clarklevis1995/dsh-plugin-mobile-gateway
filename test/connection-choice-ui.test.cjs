@@ -7,7 +7,7 @@ const React = require('react')
 const { create, act } = require('react-test-renderer')
 
 function loadPanel(locale = 'zh', statusOverrides = {}, languageSettings = {}) {
-  let api, sequence = 0, failSave = false, failStatus = false, statusGate = null, saveGate = null
+  let api, sequence = 0, failSave = false, failStatus = false, statusGate = null, deviceGate = null, statusBodyGate = null, saveGate = null, failDevices = false
   const calls = [], timers = new Map(), timeouts = new Map()
   let status = {
     platform: 'darwin', gatewayEnabled: true, gatewayMode: 'persistent', requireAuth: true,
@@ -38,7 +38,35 @@ function loadPanel(locale = 'zh', statusOverrides = {}, languageSettings = {}) {
       if (failStatus) { failStatus = false; ok = false; data = { message: 'status unavailable' } }
       else data = status
     }
-    else if (url === '/mgw/devices') data = { devices: [] }
+    else if (url === '/mgw/devices') {
+      data = { devices: languageSettings.devices || [] }
+      const gate = deviceGate; deviceGate = null
+      if (gate) await new Promise((resolve, reject) => {
+        const cancel = () => reject(new Error('aborted'))
+        options.signal?.addEventListener('abort', cancel, { once: true })
+        gate.then(() => { options.signal?.removeEventListener('abort', cancel); resolve() })
+      })
+      if (failDevices) { failDevices = false; ok = false; data = { message: 'devices unavailable' } }
+    }
+    else if (url.endsWith('/revoke')) {
+      const gate = saveGate; saveGate = null
+      if (gate) await gate
+      if (failSave) { failSave = false; ok = false; data = { message: 'delete failed' } }
+      else {
+        const ids = url === '/mgw/devices/revoke' ? JSON.parse(options.body).deviceIds : [decodeURIComponent(url.slice('/mgw/devices/'.length, -'/revoke'.length))]
+        const removed = new Set(ids)
+        languageSettings.devices = (languageSettings.devices || []).filter(device => !removed.has(device.id))
+        data = { revoked: true, revokedIds: ids, devices: languageSettings.devices }
+      }
+    }
+    else if (url.endsWith('/permissions')) {
+      if (failSave) { failSave = false; ok = false; data = { message: 'permission save failed' } }
+      else {
+        const device = languageSettings.devices.find(row => url.includes(encodeURIComponent(row.id)))
+        device.permissions = { ...device.permissions, ...JSON.parse(options.body).permissions }
+        data = { permissions: device.permissions }
+      }
+    }
     else if (url === '/mgw/connection') {
       const gate = saveGate; saveGate = null
       if (gate) await new Promise((resolve, reject) => {
@@ -60,7 +88,17 @@ function loadPanel(locale = 'zh', statusOverrides = {}, languageSettings = {}) {
       pairing: { expiresAt: Date.now() + 300000 }, svg: '<svg/>', qrPayload: 'synthetic-pairing',
       payload: { publicUrl: JSON.parse(options.body).publicUrl },
     }
-    return { ok, json: async () => data }
+    const gate = url === '/mgw/status' ? statusBodyGate : null
+    if (gate) statusBodyGate = null
+    return { ok, json: async () => {
+      if (options.signal?.aborted) throw new Error('aborted')
+      if (gate) await new Promise((resolve, reject) => {
+        const cancel = () => reject(new Error('aborted'))
+        options.signal?.addEventListener('abort', cancel, { once: true })
+        gate.then(() => { options.signal?.removeEventListener('abort', cancel); resolve() })
+      })
+      return data
+    } }
   }
   const storage = languageSettings.storage || new Map()
   const localeListeners = new Set(), disposers = []
@@ -94,6 +132,9 @@ function loadPanel(locale = 'zh', statusOverrides = {}, languageSettings = {}) {
     dispose() { for (const dispose of disposers.reverse()) dispose?.() },
     failNextSave() { failSave = true },
     failNextStatus() { failStatus = true },
+    failNextDevices() { failDevices = true },
+    delayNextDevices() { let release; deviceGate = new Promise(resolve => { release = resolve }); return release },
+    delayNextStatusBody() { let release; statusBodyGate = new Promise(resolve => { release = resolve }); return release },
     updateStatus(update) { status = { ...status, ...update } },
     delayNextStatus() { let release; statusGate = new Promise(resolve => { release = resolve }); return release },
     delayNextSave() { let release; saveGate = new Promise(resolve => { release = resolve }); return release },
@@ -106,7 +147,7 @@ test('gateway requests resolve all management routes against the DSH document ba
   const routes = ['/mgw/status', '/mgw/devices', '/mgw/network-test', '/mgw/tools/restart',
     '/mgw/public-setup', '/mgw/connection', '/mgw/cloudflare', '/mgw/cloudflare/check',
     '/mgw/cloudflare/restart', '/mgw/pair', '/mgw/gateway', '/mgw/auth',
-    '/mgw/devices/device%2Fid/revoke']
+    '/mgw/devices/device%2Fid/revoke', '/mgw/devices/revoke']
   for (const [baseURI, prefix] of [
     ['https://nas.example/', ''],
     ['https://nas.example/app/deepseek/', '/app/deepseek'],
@@ -774,4 +815,233 @@ test('language persists across reloads and unsupported DSH locales use English',
   assert.equal(selector.props['aria-label'], '表示言語')
   await act(async () => root.unmount())
   reloaded.dispose()
+})
+
+
+test('device permission tab controls each paired device and preserves state after reopening', async () => {
+  const settings = { devices: [
+    { id: 'phone-a', name: 'Phone A', permissions: {}, modules: {} },
+    { id: 'phone-b', name: 'Phone B', permissions: {}, modules: {} },
+  ] }
+  const api = loadPanel('zh', {}, settings)
+  let root
+  const enter = async () => {
+    await act(async () => { root = create(React.createElement(api.DevicePanel)) })
+    await act(async () => root.root.findAllByType('button').find(row => row.children.join('') === '设备权限').props.onClick())
+  }
+  try {
+    await enter()
+    const toggle = name => root.root.findByProps({ 'aria-label': name, role: 'switch' })
+    assert.equal(toggle('Phone A 日历').props.checked, false)
+    await act(async () => toggle('Phone A 日历').props.onChange({ target: { checked: true } }))
+    assert.equal(toggle('Phone A 日历').props.checked, true)
+    assert.equal(toggle('Phone B 日历').props.checked, false)
+    assert.equal(api.calls.filter(call => call.url.endsWith('/permissions')).length, 1)
+    api.failNextSave()
+    await act(async () => toggle('Phone B 照片').props.onChange({ target: { checked: true } }))
+    assert.equal(toggle('Phone B 照片').props.checked, false)
+    await act(async () => root.unmount()); root = null
+    await enter()
+    assert.equal(toggle('Phone A 日历').props.checked, true)
+    assert.equal(root.root.findAll(row => row.type === 'input' && /通讯录|联系人/.test(row.props['aria-label'] || '')).length, 0)
+  } finally { if (root) await act(async () => root.unmount()); api.dispose() }
+})
+
+
+test('trusted devices and permissions show the same online-first rows and counts; batch deletion updates both', async () => {
+  const settings = { devices: [
+    { id: 'offline-a', name: 'Same', displayName: 'Same (1)', online: false, permissions: { calendar: true }, modules: {} },
+    { id: 'online-b', name: 'Same', displayName: 'Same (2)', online: true, permissions: {}, modules: {} },
+    { id: 'offline-c', name: 'C', online: false, permissions: {}, modules: {} },
+  ] }
+  const api = loadPanel('zh', {}, settings)
+  let root
+  const section = name => root.root.findAllByType('button').find(node => node.children.join('') === name)
+  const trusted = () => root.root.findAllByType('div').filter(node => node.props['data-device-id'])
+  const permissionRows = () => root.root.findAllByType('details').filter(node => node.props['data-device-id'])
+  const input = name => root.root.findByProps({ 'aria-label': name, type: 'checkbox' })
+  const deletion = () => root.root.findAllByType('button').find(node => /^批量删除/.test(node.children.join('')))
+  try {
+    await act(async () => { root = create(React.createElement(api.DevicePanel)) })
+    await act(async () => section('可信设备').props.onClick())
+    assert.deepEqual(trusted().map(node => node.props['data-device-id']), ['online-b', 'offline-a', 'offline-c'])
+    assert.equal(root.root.findAllByType('h3').find(node => node.props['data-device-count'] !== undefined).props['data-device-count'], 3)
+    assert.equal(deletion().props.disabled, true)
+    await act(async () => input('选择 Same (1)').props.onChange({ target: { checked: true } }))
+    assert.equal(input('全选设备').props['aria-checked'], 'mixed')
+    await act(async () => input('选择 Same (2)').props.onChange({ target: { checked: true } }))
+    await act(async () => deletion().props.onClick())
+    const call = api.calls.find(row => row.url === '/mgw/devices/revoke')
+    assert.deepEqual(JSON.parse(call.options.body).deviceIds, ['online-b', 'offline-a'])
+    assert.deepEqual(trusted().map(node => node.props['data-device-id']), ['offline-c'])
+    await act(async () => section('设备权限').props.onClick())
+    assert.deepEqual(permissionRows().map(node => node.props['data-device-id']), ['offline-c'])
+    assert.deepEqual(root.root.findAllByType('h3').filter(node => node.props['data-device-count'] !== undefined).map(node => node.props['data-device-count']), [1, 1])
+    await act(async () => section('可信设备').props.onClick())
+    await act(async () => input('全选设备').props.onChange({ target: { checked: true } }))
+    assert.equal(input('选择 C').props.checked, true)
+    await act(async () => input('全选设备').props.onChange({ target: { checked: false } }))
+    assert.equal(input('选择 C').props.checked, false)
+    await act(async () => input('全选设备').props.onChange({ target: { checked: true } }))
+    await act(async () => deletion().props.onClick())
+    assert.equal(trusted().length, 0)
+    await act(async () => root.unmount()); root = null
+    await act(async () => { root = create(React.createElement(api.DevicePanel)) })
+    assert.equal(trusted().length, 0)
+  } finally { if (root) await act(async () => root.unmount()); api.dispose() }
+})
+
+test('failed batch deletion preserves selection and permissions and cannot submit twice while pending', async () => {
+  const api = loadPanel('zh', {}, { devices: [{ id: 'phone-a', name: 'A', online: true, permissions: { calendar: true }, modules: {} }] })
+  let root
+  const input = () => root.root.findByProps({ 'aria-label': '选择 A', type: 'checkbox' })
+  const deletion = () => root.root.findAllByType('button').find(node => /^批量删除/.test(node.children.join('')))
+  try {
+    await act(async () => { root = create(React.createElement(api.DevicePanel)) })
+    await act(async () => input().props.onChange({ target: { checked: true } }))
+    api.failNextSave()
+    const release = api.delayNextSave(), submit = deletion().props.onClick
+    let pending
+    await act(async () => { pending = submit() })
+    assert.equal(input().props.disabled, true)
+    await act(async () => submit())
+    assert.equal(api.calls.filter(call => call.url === '/mgw/devices/revoke').length, 1)
+    await act(async () => { release(); await pending })
+    assert.equal(input().props.checked, true)
+    assert.equal(input().props.disabled, false)
+    assert.match(JSON.stringify(root.toJSON()), /delete failed/)
+    await act(async () => root.root.findAllByType('button').find(node => node.children.join('') === '设备权限').props.onClick())
+    assert.equal(root.root.findByProps({ 'aria-label': 'A 日历', role: 'switch' }).props.checked, true)
+    // Single-device removal uses the same shared list and clears the matching permission row too.
+    await act(async () => root.root.findAllByType('button').find(node => node.props.title === '吊销 A').props.onClick({ detail: 0, preventDefault() {}, stopPropagation() {} }))
+    assert.equal(root.root.findAllByType('details').filter(node => node.props['data-device-id']).length, 0)
+  } finally { if (root) await act(async () => root.unmount()); api.dispose() }
+})
+
+
+test('a poll that started before deletion cannot restore removed rows after deletion finishes', async () => {
+  const api = loadPanel('zh', {}, { devices: [{ id: 'phone-a', name: 'A', online: false, permissions: {}, modules: {} }] })
+  let root
+  try {
+    await act(async () => { root = create(React.createElement(api.DevicePanel)) })
+    const release = api.delayNextDevices()
+    let stalePoll
+    await act(async () => { stalePoll = [...api.timers.values()][0]() })
+    await act(async () => root.root.findByProps({ 'aria-label': '选择 A', type: 'checkbox' }).props.onChange({ target: { checked: true } }))
+    await act(async () => root.root.findAllByType('button').find(node => /^批量删除/.test(node.children.join(''))).props.onClick())
+    await act(async () => { release(); await stalePoll })
+    assert.equal(root.root.findAllByType('div').filter(node => node.props['data-device-id']).length, 0)
+    await act(async () => root.root.findAllByType('button').find(node => node.children.join('') === '设备权限').props.onClick())
+    assert.equal(root.root.findAllByType('details').filter(node => node.props['data-device-id']).length, 0)
+  } finally { if (root) await act(async () => root.unmount()); api.dispose() }
+})
+
+
+test('initial devices render and refresh completes while gateway status is still pending', async () => {
+  const api = loadPanel('zh', {}, { devices: [{ id: 'phone-a', name: 'A', online: true }] })
+  const release = api.delayNextStatus()
+  let root
+  try {
+    await act(async () => { root = create(React.createElement(api.DevicePanel)) })
+    assert.equal(root.root.findByProps({ 'aria-label': '选择 A', type: 'checkbox' }).props.checked, false)
+    assert.match(JSON.stringify(root.toJSON()), /正在加载网关状态/)
+    const initialStatusCalls = api.calls.filter(call => call.url === '/mgw/status').length
+    for (let i = 0; i < 5; i++) await act(async () => [...api.timers.values()][0]())
+    assert.equal(api.calls.filter(call => call.url === '/mgw/status').length, initialStatusCalls)
+    await act(async () => root.root.findAllByType('button').find(node => node.children.join('') === '刷新').props.onClick())
+    assert.match(JSON.stringify(root.toJSON()), /已刷新/)
+    assert.equal(root.root.findAllByType('button').find(node => node.children.join('') === '刷新').props.disabled, false)
+    await act(async () => { release() })
+    assert.doesNotMatch(JSON.stringify(root.toJSON()), /正在加载网关状态/)
+  } finally { if (root) await act(async () => root.unmount()); release(); api.dispose() }
+})
+
+test('gateway status renders independently of a delayed or failed device list', async () => {
+  const api = loadPanel('zh')
+  const release = api.delayNextDevices()
+  let root
+  try {
+    await act(async () => { root = create(React.createElement(api.DevicePanel)) })
+    assert.match(JSON.stringify(root.toJSON()), /移动网关已开启/)
+    assert.doesNotMatch(JSON.stringify(root.toJSON()), /正在加载网关状态/)
+    const before = api.calls.filter(call => call.url === '/mgw/devices').length
+    for (let i = 0; i < 5; i++) await act(async () => [...api.timers.values()][0]())
+    assert.equal(api.calls.filter(call => call.url === '/mgw/devices').length, before)
+    api.failNextDevices()
+    await act(async () => { release() })
+    assert.match(JSON.stringify(root.toJSON()), /设备列表加载失败/)
+    await act(async () => root.root.findAllByType('button').find(node => node.children.join('') === '刷新').props.onClick())
+    assert.doesNotMatch(JSON.stringify(root.toJSON()), /设备列表加载失败/)
+    assert.match(JSON.stringify(root.toJSON()), /暂无已配对设备/)
+  } finally { if (root) await act(async () => root.unmount()); release(); api.dispose() }
+})
+
+test('hung reads time out, stop refreshing and can retry without losing either page', async () => {
+  const api = loadPanel('zh', {}, { devices: [{ id: 'phone-a', name: 'A', online: true }] })
+  const releaseDevices = api.delayNextDevices(), releaseStatus = api.delayNextStatus()
+  let root, manual
+  try {
+    await act(async () => { root = create(React.createElement(api.DevicePanel)) })
+    const click = root.root.findAllByType('button').find(node => node.children.join('') === '刷新').props.onClick
+    await act(async () => { manual = click() })
+    assert.equal(api.calls.filter(call => call.url === '/mgw/devices').length, 1)
+    const deadlines = [...api.timeouts.values()].filter(timer => timer.delay === 5000)
+    assert.equal(deadlines.length, 2)
+    await act(async () => { for (const timer of deadlines) timer.fn(); await manual })
+    assert.match(JSON.stringify(root.toJSON()), /设备列表加载超时/)
+    assert.match(JSON.stringify(root.toJSON()), /网关状态暂不可用/)
+    assert.doesNotMatch(JSON.stringify(root.toJSON()), /刷新中|正在加载网关状态/)
+    assert.equal(api.calls.filter(call => call.url === '/mgw/status' || call.url === '/mgw/devices').every(call => call.options.signal.aborted), true)
+    await act(async () => root.root.findAllByType('button').find(node => node.children.join('') === '刷新').props.onClick())
+    assert.ok(root.root.findByProps({ 'aria-label': '选择 A', type: 'checkbox' }))
+    await act(async () => [...api.timers.values()][0]())
+    assert.doesNotMatch(JSON.stringify(root.toJSON()), /网关状态暂不可用|设备列表加载超时/)
+    await act(async () => root.root.findAllByType('button').find(node => node.children.join('') === '设备权限').props.onClick())
+    assert.deepEqual(root.root.findAllByType('details').filter(node => node.props['data-device-id']).map(node => node.props['data-device-id']), ['phone-a'])
+  } finally { if (root) await act(async () => root.unmount()); releaseDevices(); releaseStatus(); api.dispose() }
+})
+
+test('closing a panel aborts its outstanding reads and clears their deadline timers', async () => {
+  const api = loadPanel('zh')
+  const releaseDevices = api.delayNextDevices(), releaseStatus = api.delayNextStatus()
+  let root
+  try {
+    await act(async () => { root = create(React.createElement(api.DevicePanel)) })
+    const reads = api.calls.filter(call => call.url === '/mgw/status' || call.url === '/mgw/devices')
+    assert.equal(reads.length, 2)
+    await act(async () => root.unmount()); root = null
+    assert.equal(reads.every(call => call.options.signal.aborted), true)
+    assert.equal([...api.timeouts.values()].filter(timer => timer.delay === 5000).length, 0)
+  } finally { if (root) await act(async () => root.unmount()); releaseDevices(); releaseStatus(); api.dispose() }
+})
+
+test('a response-body timeout cannot be swallowed as an empty successful response', { timeout: 2000 }, async () => {
+  const api = loadPanel('zh'), release = api.delayNextStatusBody()
+  const pending = api.request('/mgw/status', { timeoutMs: 5000 })
+  const rejected = assert.rejects(pending, error => error.code === 'request_timeout')
+  await new Promise(resolve => setImmediate(resolve))
+  const deadline = [...api.timeouts.values()].find(timer => timer.delay === 5000)
+  assert.ok(deadline)
+  deadline.fn()
+  await rejected
+  release()
+  assert.equal(api.timeouts.size, 0)
+  api.dispose()
+})
+
+
+test('a failed device refresh keeps the visible devices and their saved permissions', async () => {
+  const api = loadPanel('zh', {}, { devices: [{ id: 'phone-a', name: 'A', permissions: { calendar: true }, modules: {} }] })
+  let root
+  try {
+    await act(async () => { root = create(React.createElement(api.DevicePanel)) })
+    api.failNextDevices()
+    await act(async () => root.root.findAllByType('button').find(node => node.children.join('') === '刷新').props.onClick())
+    assert.ok(root.root.findByProps({ 'aria-label': '选择 A', type: 'checkbox' }))
+    assert.match(JSON.stringify(root.toJSON()), /devices unavailable/)
+    await act(async () => root.root.findAllByType('button').find(node => node.children.join('') === '设备权限').props.onClick())
+    assert.equal(root.root.findByProps({ 'aria-label': 'A 日历', role: 'switch' }).props.checked, true)
+    await act(async () => [...api.timers.values()][0]())
+    assert.doesNotMatch(JSON.stringify(root.toJSON()), /devices unavailable/)
+  } finally { if (root) await act(async () => root.unmount()); api.dispose() }
 })

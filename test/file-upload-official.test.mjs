@@ -32,11 +32,18 @@ agentService.get = id => agents.get(id)
 const commands = new Service(ctx, 'commands')
 commands.registerFileReceiptResolver = () => () => {}
 const uploads = new FileUploads(ctx)
-const makeAgent = id => ({ id, session: { header: {}, snapshotEvents: () => [] },
-  inbox: { nextTurn: [], nextStep: [] },
-  followup(message) { this.inbox.nextTurn.push(message); received.push(message) },
-  steer(message) { this.inbox.nextStep.push(message); received.push(message) },
-})
+const makeAgent = id => {
+  const events = []
+  return { id, session: { header: {}, seq: 0, inheritedEventCount: 0,
+    snapshotEvents: offset => events.slice(offset) },
+    inbox: { nextTurn: [], nextStep: [] },
+    followup(message) {
+      this.inbox.nextTurn.push(message); received.push(message)
+      events.push({ type: 'user/message', seq: this.session.seq++, data: message })
+    },
+    steer(message) { this.followup(message) },
+  }
+}
 agents.set('s1', makeAgent('s1'))
 agents.set('s2', makeAgent('s2'))
 const host = createDshHostAdapter({ invoke: async () => ({}), stream: async () => (async function* () {})() }, peer, connection)
@@ -60,7 +67,7 @@ try {
   assert.deepEqual(await fsp.readFile(attachments.fileHostPath(completed.file)), bytes)
   assert.deepEqual(uploads.resolve(agents.get('s1'), completed.receiptId), { type: 'file', attachment: completed.file })
   assert.equal(uploads.resolve(agents.get('s2'), completed.receiptId), undefined)
-  const promptContext = { ctx: { agents: agentService, attachments, fileUploads: uploads },
+  const promptContext = { promptReceipts: new WeakMap(), hasPromptRequest: SessionCommandController.prototype.hasPromptRequest, ctx: { agents: agentService, attachments, fileUploads: uploads },
     resolveAgent: async id => agents.get(id) }
   const prompt = { sessionId: 's1', requestId: 'official-send', mode: 'queue',
     content: [{ type: 'file', receiptId: completed.receiptId }] }

@@ -1,3 +1,4 @@
+import { capturePhoneMessage, preparePhoneStep, phoneOrigin } from '../lib/phone-request-sources.mjs'
 import { createTestConnection } from './helpers/peer.mjs'
 import { createRequire } from 'node:module'
 
@@ -90,6 +91,7 @@ function expectRejected(url, options = {}) {
   const uploadedFiles = new Map()
   const prompts = []
   const events = {}
+  const sourceProofs = []
   const server = http.createServer((req, res) => {
     if (managementRoute && (req.url === managementRoute.path || req.url.startsWith(`${managementRoute.path}/`))) {
       managementRoute.handler(req, res)
@@ -115,6 +117,11 @@ function expectRejected(url, options = {}) {
         if (request.namespace === 'session' && request.method === 'prompt') {
           const prompt = request.args.request
           prompts.push(prompt)
+          const sourceAgent = { id: prompt.sessionId }
+          const sourceMessage = { id: `host-message-${prompt.requestId}`, source: { kind: 'user', rpcId: prompt.requestId, clientTimeZone: prompt.clientTimeZone } }
+          capturePhoneMessage({ agent: sourceAgent, message: sourceMessage })
+          preparePhoneStep({ agent: sourceAgent, turn: 1, step: 1, messages: [sourceMessage] })
+          sourceProofs.push({ requestId: prompt.requestId, origin: phoneOrigin(sourceAgent) })
           const content = prompt.content.map(part => {
             if (part.type !== 'file') return part
             const uploaded = uploadedFiles.get(part.receiptId)
@@ -319,6 +326,7 @@ function expectRejected(url, options = {}) {
     'session-create',
     'session-agent-preset',
     'agent-team-v1',
+    'agent-team-mode-v1',
     'subagent-conversations-v1',
     'commands',
     'tasks',
@@ -328,6 +336,7 @@ function expectRejected(url, options = {}) {
     'plugin-management-v1',
     'plugin-updates-v1',
     'speech-input-v1',
+    'device-tools-v1',
     'file-upload-v1',
     'session-cancel',
     'queue-control',
@@ -405,6 +414,115 @@ function expectRejected(url, options = {}) {
   assert.equal(devicesBody.devices.length, 1)
   assert.equal(devicesBody.devices[0].online, true)
   assert.equal(devicesBody.devices[0].connections, 2)
+  const sourceSent = waitForMessage(pairedSocket, 'sent')
+  pairedSocket.send(JSON.stringify({ type: 'message', sessionId: 's1', requestId: 'source-routing-proof', text: 'source routing proof',
+    deviceId: 'forged-other-phone', source: { gatewayId: 'forged-gateway', deviceId: 'forged-other-phone' }, clientTimeZone: 'Asia/Shanghai' }))
+  assert.equal((await sourceSent).requestId, 'source-routing-proof')
+  const proof = sourceProofs.find(row => row.requestId === 'source-routing-proof')
+  assert.equal(proof.origin.deviceId, devicesBody.devices[0].id)
+  assert.equal(proof.origin.gatewayId, connectedStatus.gatewayId)
+  assert.equal(proof.origin.timeZone, 'Asia/Shanghai')
+
+
+  // 真实 HTTP 管理权限 → 控制 WebSocket → 手机结果 → Agent 等待调用。
+  const phoneId = devicesBody.devices[0].id
+  const registeredPhone = waitForMessage(tokenSocket, 'device-tools-registered')
+  tokenSocket.send(JSON.stringify({ type: 'device-tools-register', version: 1, requestId: 'native-connectors', capabilityRevision: 1,
+    modules: [{ id: 'calendar', enabled: true, available: true }] }))
+  const phoneRegistration = await registeredPhone
+  assert.equal(phoneRegistration.permissions.calendar, false)
+  assert.equal(phoneRegistration.statusQuery, true)
+  assert.deepEqual(phoneRegistration.modules, [{ id: 'calendar', enabled: true, available: true, tools: ['calendar.busy'] }])
+  const phoneStatus = waitForMessage(tokenSocket, 'device-tools-status')
+  tokenSocket.send(JSON.stringify({ type: 'device-tools-status', version: 1, requestId: 'inspect-registration' }))
+  const currentRegistration = await phoneStatus
+  assert.equal(currentRegistration.requestId, 'inspect-registration')
+  assert.equal(currentRegistration.status, 'registered')
+  assert.equal(currentRegistration.connectionLeaseId, phoneRegistration.connectionLeaseId)
+  assert.deepEqual(currentRegistration.modules, phoneRegistration.modules)
+  assert.equal(currentRegistration.permissions.calendar, false)
+
+  for (const [revision, allowed] of [[2, true], [3, false]]) {
+    const synced = waitForMessage(tokenSocket, 'device-tools-registered')
+    tokenSocket.send(JSON.stringify({ type: 'device-tools-register', version: 1, requestId: `phone-toggle-${revision}`, capabilityRevision: revision,
+      modules: [{ id: 'calendar', enabled: allowed, available: true }], permissionChanges: { calendar: allowed } }))
+    const snapshot = await synced
+    assert.equal(snapshot.permissionSync, true)
+    assert.equal(snapshot.permissions.calendar, allowed)
+    assert.equal(createRegistry(path.join(temp, 'integration-devices.json')).list().find(row => row.id === phoneId).permissions.calendar, allowed)
+  }
+  const readOnlyRegistration = waitForMessage(tokenSocket, 'device-tools-registered')
+  tokenSocket.send(JSON.stringify({ type: 'device-tools-register', version: 1, requestId: 'phone-register-only', capabilityRevision: 4,
+    modules: [{ id: 'calendar', enabled: true, available: true }] }))
+  assert.equal((await readOnlyRegistration).permissions.calendar, false)
+
+  const permissionUrl = `${base}/mgw/devices/${encodeURIComponent(phoneId)}/permissions`
+  assert.equal((await fetch(permissionUrl, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: 'https://other.example' }, body: JSON.stringify({ permissions: { calendar: true } }) })).status, 403)
+  assert.equal((await fetch(permissionUrl, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base }, body: JSON.stringify({ permissions: { contacts: true } }) })).status, 400)
+  const permissionPush = waitForMessage(tokenSocket, 'device-tools-permissions')
+  assert.equal((await fetch(permissionUrl, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base }, body: JSON.stringify({ permissions: { calendar: true } }) })).status, 200)
+  assert.equal((await permissionPush).permissions.calendar, true)
+  assert.equal(createRegistry(path.join(temp, 'integration-devices.json')).list().find(row => row.id === phoneId).permissions.calendar, true)
+  const broker = globalThis[Symbol.for('whaleness.phone-tools.brokers.v1')].get(connectedStatus.gatewayId)
+  const context = { deviceId: phoneId, sessionId: 's1', toolCallId: 'native-tool-call' }
+  const range = { start: '2026-11-10T00:00:00+08:00', end: '2026-11-11T00:00:00+08:00', timeZone: 'Asia/Shanghai' }
+  const invocation = waitForMessage(tokenSocket, 'device-tool-invoke')
+  const phoneResult = broker.invoke(context, 'calendar.busy', range)
+  const requested = await invocation
+  assert.equal(requested.sessionId, 's1')
+  assert.deepEqual(requested.arguments, range)
+  const reply = { type: 'device-tool-result', version: 1, invocationId: requested.invocationId, connectionLeaseId: requested.connectionLeaseId,
+    status: 'success', result: { busyIntervals: [], collectedAt: '2026-11-10T00:00:00Z' } }
+  pairedSocket.send(JSON.stringify(reply)) // 同一设备的旧连接没有本次调用租约。
+  tokenSocket.send(JSON.stringify(reply))
+  assert.deepEqual(await phoneResult, reply.result)
+  const pendingCall = waitForMessage(tokenSocket, 'device-tool-invoke')
+  const cancelledResult = broker.invoke(context, 'calendar.busy', range)
+  const cancelledAssertion = assert.rejects(cancelledResult, /tool_disabled/)
+  await pendingCall
+  const cancelledFrame = waitForMessage(tokenSocket, 'device-tool-cancel')
+  await fetch(permissionUrl, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base }, body: JSON.stringify({ permissions: { calendar: false } }) })
+  await cancelledFrame; await cancelledAssertion
+
+
+  // New iPhone advertises its actual write tools; a real WS result completes the Agent call.
+  const writableRegistration = waitForMessage(tokenSocket, 'device-tools-registered')
+  tokenSocket.send(JSON.stringify({ type: 'device-tools-register', version: 1, requestId: 'writable-iphone', capabilityRevision: 5,
+    modules: [
+      { id: 'calendar', enabled: true, available: true, tools: ['calendar.busy', 'calendar.create'] },
+      { id: 'reminders', enabled: true, available: true, tools: ['reminders.list', 'reminders.create'] },
+      { id: 'alarms', enabled: true, available: true, tools: ['alarms.create', 'alarms.list', 'alarms.cancel'] },
+      { id: 'music', enabled: true, available: true, tools: ['music.library', 'music.play-library', 'music.catalog-search'] },
+      { id: 'location', enabled: true, available: true, tools: ['location.precise', 'maps.search', 'maps.geocode', 'maps.reverse-geocode', 'maps.directions', 'maps.open', 'maps.markers.create', 'maps.markers.list', 'maps.markers.update', 'maps.markers.delete'] },
+    ], permissionChanges: { calendar: true, reminders: true, alarms: true, music: true, location: true } }))
+  assert.equal((await writableRegistration).permissions.alarms, true)
+  const operationId = '819e6e40-5008-4d8e-917e-31dbd0046a47'
+  const creates = [
+    ['calendar.create', { operationId, title: 'Meeting', ...range, alertMinutesBefore: 15 }, { id: 'event-created', title: 'Meeting', ...range, allDay: false, operationId, status: 'created' }],
+    ['reminders.create', { operationId, title: 'Buy milk', timeZone: range.timeZone }, { id: 'reminder-created', title: 'Buy milk', dueDate: null, timeZone: range.timeZone, notify: false, priority: 0, operationId, status: 'created' }],
+    ['alarms.create', { operationId, title: 'Wake up', fireDate: range.start, timeZone: range.timeZone }, { id: operationId, title: 'Wake up', fireDate: range.start, timeZone: range.timeZone, state: 'scheduled', operationId, status: 'created' }],
+    ['music.library', {}, { items: [{ id: 'library:i.test', title: 'Song', artworkURL: 'https://is1-ssl.mzstatic.com/image/thumb/Music/test/300x300bb.jpg', durationSeconds: 245, url: 'https://music.apple.com/song/123' }], kind: 'songs', offset: 0, limit: 20, hasMore: false, nextOffset: null,
+      pagingLimitReached: false, source: 'apple-music-library', scope: 'device-synced-personal-library', downloadedOnly: false, status: 'ok' }],
+    ['music.catalog-search', { query: 'Song' }, { items: [{ id: 'catalog:123', title: 'Song', artist: 'Singer', album: 'Album', artworkURL: 'https://is1-ssl.mzstatic.com/image/thumb/Music/test/300x300bb.jpg', durationSeconds: 245, url: 'https://music.apple.com/song/123' }], source: 'apple-music-catalog' }],
+    ['music.play-library', { kind: 'songs', itemId: 'library:i.test' }, { playbackState: 1, playbackSeconds: 0, requested: 'music.play-library' }],
+    ['location.precise', {}, { latitude: 31.234567, longitude: 121.456789, precision: 'precise', horizontalAccuracyMeters: 12, sampledAt: '2026-11-10T00:00:00Z' }],
+    ['maps.search', { query: 'coffee', latitude: 31, longitude: 121 }, { items: [{ name: 'Cafe', latitude: 31, longitude: 121, address: 'Street' }], truncated: false, source: 'apple-maps' }],
+    ['maps.open', { latitude: 31, longitude: 121 }, { status: 'handoff-requested', latitude: 31, longitude: 121, name: 'Destination', mode: 'show' }],
+    ['maps.markers.create', { operationId, name: 'Parking', latitude: 31, longitude: 121 }, { marker: { id: operationId, name: 'Parking', latitude: 31, longitude: 121, address: '', notes: '', revision: 1, createdAt: '2026-11-10T00:00:00Z', updatedAt: '2026-11-10T00:00:00Z' }, operationId, status: 'created', replayed: false, source: 'whaleness-host-markers' }],
+    ['maps.markers.list', {}, { items: [], total: 0, offset: 0, limit: 20, hasMore: false, nextOffset: null, source: 'whaleness-host-markers' }],
+  ]
+  for (const [tool, args, result] of creates) {
+    const requested = waitForMessage(tokenSocket, 'device-tool-invoke')
+    const completed = broker.invoke({ ...context, toolCallId: tool }, tool, args)
+    const request = await requested
+    if (args.operationId) assert.equal(request.arguments.operationId, operationId)
+    assert.equal(request.sessionId, context.sessionId)
+    tokenSocket.send(JSON.stringify({ type: 'device-tool-result', version: 1, invocationId: request.invocationId,
+      connectionLeaseId: request.connectionLeaseId, status: 'success', result }))
+    assert.deepEqual(await completed, result)
+  }
+  const writeDevices = await (await fetch(`${base}/mgw/devices`)).json()
+  assert.deepEqual(writeDevices.devices[0].modules.alarms.tools, ['alarms.create', 'alarms.list', 'alarms.cancel'])
 
   const rePairResponse = await fetch(`${base}/mgw/pair`, {
     method: 'POST',
@@ -509,8 +627,51 @@ function expectRejected(url, options = {}) {
   const browserDevices = await (await fetch(`${base}/mgw/devices`)).json()
   assert.equal(browserDevices.devices.length, 1)
   assert.equal(browserDevices.devices[0].name, 'x'.repeat(80))
-  browserSocket.close()
-  browserTokenSocket.close()
+  // Batch removal is one persisted change: disconnect all selected devices/channels,
+  // cancel native work, keep unselected devices and reject deleted credentials.
+  const pairBulkPhone = async installation => {
+    const response = await fetch(`${base}/mgw/pair`, { method: 'POST',
+      headers: { 'Content-Type': 'application/json', Origin: base }, body: JSON.stringify({ publicUrl: wsUrl }) })
+    const body = await response.json()
+    const socket = new WebSocket(wsUrl, ['dsh-mobile-v1', `dsh-pair.${body.payload.pairingCode}`],
+      { headers: { 'X-DSH-Device-ID': installation } })
+    const paired = waitForMessage(socket, 'paired'), hello = waitForMessage(socket, 'hello')
+    await once(socket, 'open'); await hello
+    return { socket, ...(await paired) }
+  }
+  const bulkOther = await pairBulkPhone('bulk-other-installation'), bulkKeep = await pairBulkPhone('bulk-keep-installation')
+  const bulkUrl = `${base}/mgw/devices/revoke`
+  const bulkRequest = (body, origin = base) => fetch(bulkUrl, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: origin }, body: JSON.stringify(body) })
+  const selectedIds = [browserPairedFrame.device.id, bulkOther.device.id]
+  assert.equal((await bulkRequest({ deviceIds: selectedIds }, 'https://other.example')).status, 403)
+  for (const body of [{}, { deviceIds: [] }, { deviceIds: [selectedIds[0], null] }, { deviceIds: selectedIds, unexpected: true }]) {
+    assert.equal((await bulkRequest(body)).status, 400)
+    assert.equal((await (await fetch(`${base}/mgw/devices`)).json()).devices.length, 3)
+  }
+  const bulkRegistered = waitForMessage(bulkOther.socket, 'device-tools-registered')
+  bulkOther.socket.send(JSON.stringify({ type: 'device-tools-register', version: 1, requestId: 'batch-register', capabilityRevision: 1,
+    modules: [{ id: 'calendar', enabled: true, available: true }], permissionChanges: { calendar: true } }))
+  await bulkRegistered
+  const bulkInvocation = waitForMessage(bulkOther.socket, 'device-tool-invoke')
+  const bulkPending = broker.invoke({ deviceId: bulkOther.device.id, sessionId: 'bulk-test', toolCallId: 'pending-before-removal' }, 'calendar.busy', range)
+  const bulkCancelled = assert.rejects(bulkPending, /device_disconnected/)
+  await bulkInvocation
+  const bulkCancelFrame = waitForMessage(bulkOther.socket, 'device-tool-cancel')
+  const removedConnections = [browserSocket, browserTokenSocket, bulkOther.socket].map(socket => once(socket, 'close'))
+  const removedResponse = await bulkRequest({ deviceIds: [...selectedIds, selectedIds[0], 'already-removed'] })
+  assert.equal(removedResponse.status, 200)
+  const removedBody = await removedResponse.json()
+  assert.deepEqual(new Set(removedBody.revokedIds), new Set(selectedIds))
+  assert.deepEqual(removedBody.devices.map(device => device.id), [bulkKeep.device.id])
+  await bulkCancelFrame; await bulkCancelled; await Promise.all(removedConnections)
+  assert.equal(bulkKeep.socket.readyState, WebSocket.OPEN)
+  for (const token of [browserPairedFrame.token, bulkOther.token]) assert.equal(await expectRejected(wsUrl, { headers: { Authorization: `Bearer ${token}` } }), 401)
+  const persistedAfterBatch = createRegistry(path.join(temp, 'integration-devices.json'))
+  assert.deepEqual(persistedAfterBatch.list().map(device => device.id), [bulkKeep.device.id])
+  assert.equal(persistedAfterBatch.authenticate(bulkKeep.token).id, bulkKeep.device.id)
+  assert.deepEqual((await (await bulkRequest({ deviceIds: selectedIds })).json()).revokedIds, [])
+  assert.deepEqual((await (await fetch(`${base}/mgw/devices`)).json()).devices.map(device => device.id), [bulkKeep.device.id])
+  bulkKeep.socket.close()
 
   const disableGatewayResponse = await fetch(`${base}/mgw/gateway`, {
     method: 'POST',

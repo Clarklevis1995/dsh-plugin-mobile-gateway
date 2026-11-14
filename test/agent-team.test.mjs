@@ -44,7 +44,7 @@ const transport = {
     })()
   },
 }
-const api = createDshHostAdapter(transport, createTestPeer())
+const api = createDshHostAdapter(transport, createTestPeer(), undefined, { runtimeVersion: '0.2.2-rc.1' })
 const query = msg => handleQuery(api, api, null, msg)
 
 test('团队与子智能体投影保留原始字段、可用性和迁移语义', async () => {
@@ -66,6 +66,70 @@ test('团队与子智能体投影保留原始字段、可用性和迁移语义',
   projectionResult = null
   assert.equal((await query({ type: 'agent-team', sessionId: 'missing', requestId: 'missing' })).code, 'session/not-found')
   projectionResult = { kind: 'sequenced', asOfSeq: 7, values }
+})
+
+test('RC.3 团队无 members 的查询和畸形值校验', async () => {
+  const raw = { enabled: true, tasks: team.tasks, failure: 'retained diagnostic' }
+  projectionResult = { kind: 'sequenced', asOfSeq: 10, values: { agentTeam: raw, subagentCatalog: catalog } }
+  const result = await query({ type: 'agent-team', sessionId: 'lead', requestId: 'rc3' })
+  assert.equal(result.kind, 'agent-team')
+  assert.equal(result.projectionState, 'ready')
+  assert.deepEqual(result.agentTeam, { ...raw, members: [] })
+  assert.equal(Object.hasOwn(raw, 'members'), false)
+  assert.deepEqual((await query({ type: 'subagents', sessionId: 'lead' })).subagentCatalog, catalog)
+  for (const invalid of [{ enabled: true, tasks: {} }, { tasks: [] }, { enabled: true, tasks: [], members: null }]) {
+    projectionResult = { kind: 'sequenced', asOfSeq: 11, values: { agentTeam: invalid } }
+    assert.equal((await query({ type: 'agent-team', sessionId: 'lead' })).kind, 'error')
+  }
+  projectionResult = { kind: 'sequenced', asOfSeq: 7, values }
+})
+
+test('RC.3 子会话请求使用新描述符并验证父子地址', async () => {
+  const seen = []
+  const modern = createDshHostAdapter({
+    async *stream(call) {
+      seen.push(call)
+      if (call.args.request.address.parentSessionId !== 'lead') {
+        throw Object.assign(new Error('wrong parent'), { code: 'subagent/unauthorized' })
+      }
+      yield { type: 'snapshot', header: { id: 'scout', version: 4 }, cursor: 1,
+        records: [], hasMore: false, projections: { asOfSeq: 1, values: { agentTeam: { enabled: false, tasks: [] } } } }
+    },
+    async invoke(call) { seen.push(call); return call.method === 'prompt' ? { messageId: 'm3' } : { accepted: true } },
+  }, createTestPeer(), undefined, { runtimeVersion: '0.2.2-rc.3' })
+  await modern.sessions.prompt({ ...child, requestId: 'r3', mode: 'queue', content: [{ type: 'text', text: '继续' }] })
+  assert.deepEqual(seen.at(-1).args.request, { requestId: 'r3', childSessionId: 'scout', delivery: 'queue', content: [{ type: 'text', text: '继续' }] })
+  await modern.sessions.cancel(child)
+  assert.equal(seen.at(-1).method, 'interruptByUser')
+  assert.deepEqual(seen.at(-1).args, { childSessionId: 'scout' })
+  const count = seen.filter(call => call.method === 'prompt').length
+  await assert.rejects(() => modern.sessions.prompt({ ...child, parentSessionId: 'wrong', mode: 'queue', content: [] }), { code: 'subagent/unauthorized' })
+  await assert.rejects(() => modern.sessions.cancel({ ...child, parentSessionId: 'wrong' }), { code: 'subagent/unauthorized' })
+  assert.equal(seen.filter(call => call.method === 'prompt').length, count)
+  assert.equal(seen.filter(call => call.method === 'interruptByUser').length, 1)
+  const history = await modern.sessions.history(child)
+  assert.deepEqual(history.projections.values.agentTeam, { enabled: false, tasks: [], members: [] })
+})
+
+test('RC.3 控制流的批量与旧式投影一致规范化，保留 null 失效语义', async () => {
+  const raw = Object.freeze({ enabled: false, tasks: [], failure: 'diagnostic' })
+  const host = createDshHostAdapter({
+    invoke: async () => ({}),
+    async *stream() {
+      yield { type: 'projection', sessionId: 'lead', seq: 1, key: 'agentTeam', value: raw }
+      yield { type: 'projection', sessionId: 'lead', seq: 2, changes: [
+        { key: 'agentTeam', val: raw }, { key: 'todos', val: [] },
+      ] }
+      yield { type: 'projection', sessionId: 'lead', seq: 3, changes: [{ key: 'agentTeam', val: null }] }
+    },
+  }, createTestPeer())
+  const frames = []
+  for await (const frame of host.openControlStream()) frames.push(frame)
+  assert.deepEqual(frames[0].value, { ...raw, members: [] })
+  assert.deepEqual(frames[1].value, frames[0].value)
+  assert.deepEqual(frames[2], { type: 'projection', sessionId: 'lead', seq: 2, key: 'todos', value: [] })
+  assert.equal(frames[3].value, null)
+  assert.equal(Object.hasOwn(raw, 'members'), false)
 })
 
 test('子会话历史、分页、独立待办和实时流使用官方父子地址', async () => {
@@ -126,6 +190,7 @@ async function waitUntil(predicate) {
 
 test('WebSocket 团队跨视图更新、重新连接基线和子视图切换', async t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-team-'))
+  const rawValues = { ...values, agentTeam: { enabled: true, tasks: team.tasks } }
   const listeners = {}, controls = [], sockets = []
   let upgrade, dispose
   const server = http.createServer()
@@ -138,20 +203,31 @@ test('WebSocket 团队跨视图更新、重新连接基线和子视图切换', a
     on(name, handler) { listeners[name] = handler; return () => {} },
     effect(factory) { dispose = factory() },
     typertGateway: {
-      invoke: transport.invoke,
+      async invoke(call) {
+        if (call.namespace === 'agentTeams') {
+          assert.equal(call.method, 'setEnabled')
+          assert.deepEqual(Object.keys(call.args).sort(), ['agentId', 'enabled'])
+          rawValues.agentTeam = { ...rawValues.agentTeam, enabled: call.args.enabled }
+          return undefined
+        }
+        if (call.method === 'projections' && call.args.request?.sessionId === 'lead') {
+          return { kind: 'sequenced', asOfSeq: 7, values: rawValues }
+        }
+        return transport.invoke(call)
+      },
       async stream(call) {
         if (call.namespace === 'session' && call.method === 'follow') {
           const address = call.args.request.address
           const id = address.childSessionId ?? address.sessionId
           return (async function* () {
             yield { type: 'snapshot', header: { id, version: 4 }, cursor: 7,
-              records: [], hasMore: false, projections: { asOfSeq: 7, values }, assistantStream: { revision: 0 } }
+              records: [], hasMore: false, projections: { asOfSeq: 7, values: rawValues }, assistantStream: { revision: 0 } }
             while (!call.signal.aborted) await delay(5)
           })()
         }
         return (async function* () {
           yield { type: 'baseline', value: call.namespace === 'workspace'
-            ? { items: [], archivedSessionIds: [] } : { projections: { lead: { asOfSeq: 7, values } } } }
+            ? { items: [], archivedSessionIds: [] } : { projections: { lead: { asOfSeq: 7, values: rawValues } } } }
           while (!call.signal.aborted) {
             if (call.method === 'control' && controls.length) yield controls.shift()
             else await delay(5)
@@ -173,12 +249,27 @@ test('WebSocket 团队跨视图更新、重新连接基线和子视图切换', a
   }
   const control = await connect('control'), conversation = await connect('conversation')
   assert.ok(control.frames[0].capabilities.includes('agent-team-v1'))
+  assert.ok(control.frames[0].capabilities.includes('agent-team-mode-v1'))
+  for (const enabled of [false, true]) {
+    const requestId = `mode-${enabled}`
+    control.socket.send(JSON.stringify({type: 'agent-team-set-enabled', sessionId: 'lead', requestId, enabled}))
+    await waitUntil(() => control.frames.some(f => f.kind === 'agent-team-mode-set' && f.requestId === requestId))
+    const saved = control.frames.find(f => f.kind === 'agent-team-mode-set' && f.requestId === requestId)
+    assert.equal(saved.agentTeam.enabled, enabled)
+    assert.equal(saved.agentTeam.tasks.length, 1)
+    assert.equal(saved.projectionState, 'ready')
+  }
+  await waitUntil(() => control.frames.some(f => f.kind === 'projection-baseline'))
+  assert.deepEqual(control.frames.find(f => f.kind === 'projection-baseline').projections.lead.values.agentTeam,
+    { ...rawValues.agentTeam, members: [] })
   conversation.socket.send(JSON.stringify({ type: 'subscribe', ...child, assistantStream: true }))
   await waitUntil(() => conversation.frames.some(f => f.kind === 'session-snapshot' && f.sessionId === 'scout'))
   const snapshot = conversation.frames.find(f => f.kind === 'session-snapshot')
   assert.equal(snapshot.parentSessionId, 'lead')
-  const updated = { ...team, tasks: [{ ...team.tasks[0], revision: 3, status: 'completed' }] }
-  controls.push({ type: 'projection', sessionId: 'lead', key: 'agentTeam', seq: 8, value: updated })
+  assert.deepEqual(snapshot.projections.values.agentTeam, { ...rawValues.agentTeam, members: [] })
+  const rawUpdated = { enabled: true, tasks: [{ ...team.tasks[0], revision: 3, status: 'completed' }] }
+  const updated = { ...rawUpdated, members: [] }
+  controls.push({ type: 'projection', sessionId: 'lead', changes: [{ key: 'agentTeam', val: rawUpdated }], seq: 8 })
   listeners['api-session/status']('scout', true)
   await waitUntil(() => control.frames.some(f => f.kind === 'agent-team-updated' && f.asOfSeq === 8))
   assert.ok(control.frames.some(f => f.kind === 'session-status' && f.sessionId === 'scout' && f.running))

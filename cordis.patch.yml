@@ -3,6 +3,8 @@
 # gateway row into the host plane (it consumes `webServer`, the Host Remote
 # Gateway and the `session/event` feed, and publishes no service of its own).
 - insert:
+    - id: mobile-phone-tools
+      name: 'dsh-plugin-mobile-gateway/phone-tools'
     - id: mobile-gateway
       name: 'dsh-plugin-mobile-gateway'
       config:

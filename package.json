@@ -1,7 +1,7 @@
 {
   "name": "dsh-plugin-mobile-gateway",
-  "version": "0.12.0",
-  "description": "Whaleness 移动网关，连接 DeepSeek Harness 与移动设备，支持安全配对、实时会话同步、智能体团队与子会话、插件管理、官方语音输入及文件传输，提供局域网、Tailscale 和 Cloudflare Tunnel 连接。0.12.0 适配 DSH 0.2.2-rc.1，新增聊天引用、宿主级自动化任务、插件更新与详情、跟随 DSH 的界面语言切换，修复批量投影及图片读取兼容性；需要 Node.js 24.9 或更高版本。",
+  "version": "0.12.1",
+  "description": "Whaleness 移动网关，连接 DeepSeek Harness 与移动设备，支持安全配对、实时会话同步、智能体团队与子会话、插件管理、官方语音输入及文件传输，提供局域网、Tailscale 和 Cloudflare Tunnel 连接。0.12.1 适配 DSH 0.2.2-rc.3，修复新版团队投影与子代理控制接口兼容性，提供会话级 Team 模式开关；需要 Node.js 24.9 或更高版本。",
   "main": "lib/index.mjs",
   "files": [
     "CHANGELOG.md",
@@ -29,7 +29,7 @@
   },
   "bin": "bin/setup-ip.mjs",
   "scripts": {
-    "test": "node --test test/tool-images.test.mjs test/dsh-runtime-version.test.mjs && node --test test/network-addresses.test.mjs test/connection-choice-ui.test.cjs && node --test test/network-diagnostics.test.mjs test/network-diagnostics-ui.test.cjs && node --test test/logging.test.mjs && node test/wire-json.test.mjs && node test/setup-ip.test.mjs && node test/host-adapter.test.mjs && node test/dsh-022.test.mjs && node --test test/file-upload.test.mjs && node test/speech-input.test.mjs && node test/plugin-management.test.mjs && node test/session-preset.test.mjs && node test/session-follower.test.mjs && node --test test/agent-team.test.mjs && node test/session-event-details.test.mjs && node test/gateway.test.mjs && node --test test/approval-replay.test.mjs && node --test test/question-replay.test.mjs && node test/auth.test.mjs && node test/lan.test.mjs && node test/cloudflared-binary.test.mjs && node test/cloudflare-tunnel.test.mjs && node --test test/public-endpoint-check.test.mjs && node test/gateway-tools.test.mjs && node test/multi-gateway.test.mjs && npm run test:webrtc",
+    "test": "node --test test/devices.test.mjs test/device-tools.test.mjs && node --test test/tool-images.test.mjs test/dsh-runtime-version.test.mjs && node --test test/network-addresses.test.mjs test/connection-choice-ui.test.cjs && node --test test/network-diagnostics.test.mjs test/network-diagnostics-ui.test.cjs && node --test test/logging.test.mjs && node test/wire-json.test.mjs && node test/setup-ip.test.mjs && node test/host-adapter.test.mjs && node --test test/workspace-changes.test.mjs && node test/dsh-022.test.mjs && node --test test/file-upload.test.mjs test/external-files.test.mjs && node test/speech-input.test.mjs && node test/plugin-management.test.mjs && node test/session-preset.test.mjs && node test/session-follower.test.mjs && node --test test/agent-team.test.mjs test/team-mode.test.mjs && node test/session-event-details.test.mjs && node test/gateway.test.mjs && node --test test/approval-replay.test.mjs && node --test test/question-replay.test.mjs && node test/auth.test.mjs && node test/lan.test.mjs && node test/cloudflared-binary.test.mjs && node test/cloudflare-tunnel.test.mjs && node --test test/public-endpoint-check.test.mjs && node test/gateway-tools.test.mjs && node test/multi-gateway.test.mjs && npm run test:webrtc",
     "test:webrtc": "node --test test/webrtc/*.test.mjs",
     "test:package": "node --test test/package-install.test.mjs",
     "test:webrtc:stress": "node test/webrtc/stress.mjs"
@@ -37,7 +37,8 @@
   "exports": {
     ".": "./lib/index.mjs",
     "./client": "./lib/client.js",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./phone-tools": "./lib/phone-tools.mjs"
   },
   "dsh": {
     "bundle": {

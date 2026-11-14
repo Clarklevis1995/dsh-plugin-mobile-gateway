@@ -1,6 +1,6 @@
 # dsh Mobile Gateway — 移动业务与传输协议参考
 
-移动端通过经过设备鉴权的 WebSocket 连接与 dsh 通信：订阅 agent 实时输出、发送文字和图片、处理 Human-in-the-loop 提问与操作审批、查询会话/工作区/历史、调整会话配置。本协议由持久化插件 `dsh-plugin-mobile-gateway` 实现。当前源码适配 DSH 0.2.2-rc.1 / Session format 4；移动端实时流接入见 [rc.2 接入说明](docs/dsh-rc2-mobile-integration.md)，插件管理见 [RC2 插件管理对接方案](docs/dsh-0.2.0-rc.2-plugin-management-mobile-integration.md)。
+移动端通过经过设备鉴权的 WebSocket 连接与 dsh 通信：订阅 agent 实时输出、发送文字和图片、处理 Human-in-the-loop 提问与操作审批、查询会话/工作区/历史、调整会话配置。本协议由持久化插件 `dsh-plugin-mobile-gateway` 实现。当前源码适配 DSH 0.2.2-rc.3 / Session format 4；移动端实时流接入见 [rc.2 接入说明](docs/dsh-rc2-mobile-integration.md)，插件管理见 [RC2 插件管理对接方案](docs/dsh-0.2.0-rc.2-plugin-management-mobile-integration.md)。
 
 DSH Remote 要求的 `peer` 由网关在 Host 内部创建并注入，身份沿用已配对设备的本机用户权限，生命周期随插件释放；移动端请求帧不增加 `peer` 字段，`dsh-mobile-v1` 协议不变。
 
@@ -670,9 +670,11 @@ let image = [
 | `session-rename` | `sessionId`, `title` | 写入用户指定的持久化 Session 名称 |
 | `history` | `sessionId`, `beforeSeq?`, `historyFormatVersion?`, `maxMessages?`, `maxBytes?`, `view?` | 历史事件页（见下） |
 | `attachment` | `sessionId`, `attachmentId` | 读取历史中属于该会话的图片字节 |
+| `workspace-changes-summary` | `sessionId`, `seq`, `requestId` | 整轮文件改动清单和增删统计；需 `workspace-changes-v1` |
+| `workspace-changes-diff` | `sessionId`, `seq`, `index`, `requestId` | 按清单原始下标读取带行号的 diff；需 `workspace-changes-v1` |
 | `file-list` | `sessionId`, `path?`, `requestId?` | 列出会话工作目录内的一层文件与文件夹 |
-| `file-resolve` | `sessionId`, `path`, `requestId` | 将文件引用解析为工作目录相对路径及预览元数据；需 `file-references-v1` |
-| `file-download-open` | `sessionId`, `path`, `requestId` | 打开一个工作目录内的普通文件下载 |
+| `file-resolve` | `sessionId`, `path`, `requestId` | 将文件引用解析为可下载路径及预览元数据；需 `file-references-v1` |
+| `file-download-open` | `sessionId`, `path`, `requestId` | 打开普通文件下载；工作区外文件由 DSH 授权读取 |
 | `file-download-read` | `transferId`, `offset` | 拉取下载的下一块字节 |
 | `file-download-cancel` | `transferId` | 取消并关闭下载 |
 | `search` | `query` | 会话全文搜索 |
@@ -836,10 +838,10 @@ DSH `present` 工具成功后持久化 `deliverables/presented`，移动端根�
 }
 ```
 
-- 输入为未做 URL 编码的文件系统路径，可以是相对路径或主机原生绝对路径；仅允许该会话工作目录内的普通文件，包括指向目录内文件的符号链接。会话 `cwd` 的已知路径别名会映射到真实工作目录。
-- 输出 `path` 为规范化的工作目录相对路径，`size` 单位为字节，`modifiedAt` 为 Unix 毫秒。随后把输出 `path` 交给现有 `file-download-open`，完成分块下载及 SHA-256 校验后在 App 内预览。
-- 解析不会创建 `transferId`，下载仍会重新验证路径与文件状态。卡片事件本身不会扩大目录读取权限；工作目录外的文件即使被 `present` 引用也返回 `file-not-allowed`。
-- `..` 路径段、NUL、空路径返回 `bad-request`；缺失、目录、越界符号链接、超限文件分别返回 `file-not-found`、`file-not-regular`、`file-not-allowed`、`file-too-large`。响应和失败均回显字符串 `requestId`，失败另带 `requestType: "file-resolve"`。
+- 输入为未做 URL 编码的文件系统路径，可以是相对路径或主机原生绝对路径（POSIX、Windows 盘符和 UNC）。工作区内普通文件保持原有读取方式；工作区外的普通文件通过 DSH `workspaceFiles.stat/readBytes` 读取，权限由该会话的 Host 文件系统决定，不直接通过 Node 文件系统绕过权限。会话 `cwd` 的已知路径别名会映射到真实工作目录。
+- 输出 `path` 在工作区内为规范化相对路径，工作区外为 Host 返回的绝对路径（Windows 分隔符统一为 `/`）。`size` 单位为字节；工作区内 `modifiedAt` 为 Unix 毫秒，外部文件省略此字段，不将 Host 的不透明 `version` 伪造为时间戳或用于旧版预览缓存。随后原样把输出 `path` 交给 `file-download-open`，完成分块下载及 SHA-256 校验后在 App 内预览。
+- 解析不会创建 `transferId`，下载会重新检查文件。外部文件每个分块都经过 Host 读取并核对路径、字节数和不透明版本，版本变化返回 `file-changed`；DSH 拒绝读取时返回 `file-not-allowed`，不回退到本地读取。卡片事件不扩大权限。`file-list` 仍仅浏览当前会话工作目录。
+- `..` 路径段、NUL、空路径返回 `bad-request`；缺失、目录或非普通文件、Host 拒绝读取、超限文件分别返回 `file-not-found`、`file-not-regular`、`file-not-allowed`、`file-too-large`。响应和失败均回显字符串 `requestId`，失败另带 `requestType: "file-resolve"`。
 - Markdown 链接由 App 解析，先提取路径并分离 `#L24` 等行号片段，再发送路径；不要把整个 Markdown、HTTP URL 或 `file://` URL 当作路径传入。行内代码只应将本轮已知文件路径及唯一匹配的文件名转换为可点击引用。
 
 两端具体接入点及验收清单见 [文件卡片与预览接入说明](docs/file-cards-mobile-integration.md)。
@@ -882,7 +884,7 @@ DSH `present` 工具成功后持久化 `deliverables/presented`，移动端根�
 - 客户端必须严格使用服务端返回块的 `offset + 已解码 data 字节数` 作为下一次 `offset`；当前版本不支持断线续传。请先写入临时文件，收到 `eof: true` 后校验整文件 SHA-256，再原子重命名为最终文件。
 - 每个 `transferId` 仅归属创建它的 WebSocket 连接。连接关闭、`file-download-cancel`、空闲 2 分钟、传完最后一块或插件卸载都会关闭文件句柄；取消成功返回 `{ "kind":"file-download-cancelled", "transferId":"..." }`。
 - 默认每块为 512 KiB、同时最多 4 个下载、单个文件最多 512 MiB。部署方可用 `fileDownloadChunkBytes`、`fileDownloadMaxTransfers`、`fileDownloadMaxBytes`、`fileDownloadIdleMs` 调整；`fileDownloadsEnabled: false` 会关闭该能力，且 `hello.capabilities` 不再包含 `file-downloads`。
-- 绝对路径、空路径（`file-download-open`）、`..` 路径段、NUL 字符、工作目录外的符号链接、目录和其他非普通文件都会被拒绝。`file-list` 不返回符号链接，避免客户端误认为其可下载。
+- `file-download-open` 接受 `file-resolve` 返回的相对或绝对路径。空路径、`..` 路径段、NUL、目录及非普通文件仍被拒绝；外部文件仅可经 Host 授权读取。`file-list` 仍拒绝绝对路径、工作区外目录和符号链接。旧版 Host 缺少 `workspaceFiles` 时保持工作区内功能，不能读取外部文件。
 
 ### 普通文件上传
 
@@ -1211,6 +1213,7 @@ Control/旧单连接接收全局模式状态增量，不受所订阅会话过滤
 - `assistant/message` → `{turn, step, text, reasoning, toolCalls[], interrupted?, usage?, finish?: {kind, failure?}}`
 - `session/title` → `{title, source?}`
 - `tool/call` → `{turn, step, callId, name, arguments}`
+- `workspace/changes` → `{turn}`，宣布整轮文件改动记录；使用事件根节点的 `seq` 查询摘要和单文件 diff，详见“整轮文件改动审阅”。
 - `deliverables/presented` → `{turn, callId, files: [{path, description?}]}`，用于本轮回复下方的文件卡片。
 - `tool/result` → `{turn, step, callId, isError, preview(≤400字符), output, outputTruncated, error?}`
 - `turn/start|end` / `step/start|end` → `{turn, step, reason?, reasonDetails?}`，保留原有 `reason` 字符串；`reasonDetails` 提供结构化终态错误或取消来源。
@@ -1261,7 +1264,8 @@ DSH Web 的“深度求索中，用时 22 秒 ···”是客户端文案，不�
 
 | 版本 | 新增 |
 |---|---|
-| v0.12.0（待发布） | 适配 DSH 0.2.2-rc.1 与 Node.js 24.9+；新增聊天引用及排队引用编辑、宿主级自动化任务、插件版本查询/更新/详情、跟随 DSH 的界面语言；修复批量投影与图片读取；完整信息见 [版本记录](CHANGELOG.md) |
+| v0.12.1（待发布） | 适配 DSH 0.2.2-rc.3；修复团队投影及子代理继续/中断兼容性，新增 agent-team-mode-v1 会话开关；协议 3、Session 格式 4 不变 |
+| v0.12.0 | 适配 DSH 0.2.2-rc.1 与 Node.js 24.9+；新增聊天引用及排队引用编辑、宿主级自动化任务、插件版本查询/更新/详情、跟随 DSH 的界面语言；修复批量投影与图片读取；完整信息见 [版本记录](CHANGELOG.md) |
 | v0.10.4 | 精简 `sessions` 列表投影，仅保留 `asOfSeq` 和 `values.title`，修复大量会话通过公网隧道传输时超时的问题；保留会话元信息和历史完整投影，现有移动客户端无需配套修改 |
 | v0.10.3 | 适配 DSH 0.2.1-rc.2；为 Remote 请求及实时订阅补齐 Connection Peer，修复读取 `signal` 时的空值报错，并随网关停止释放 Peer；移动端协议保持不变 |
 | v0.10.2 | 补齐 `deliverables/presented` 文件卡片实时字段；新增 `file-references-v1` 能力与 `file-resolve` 安全文件引用解析；复用现有分块下载支持移动端预览接入 |
@@ -1459,7 +1463,7 @@ history. Older gateways without the capability continue using one connection.
 
 ## 智能体团队与子会话（agent-team-v1 / subagent-conversations-v1）
 
-当前源码新增两个协议 3 可选能力，Host 适配基线为 DSH 0.2.1-rc.2、Session format 4。完整 APP 实施规范见 [智能体团队 APP 详细接入指南](docs/agent-team-app-integration.md)，包含成员与任务完整字段、目录树、视图切换、消息和停止、投影缓存、恢复流程及验收清单。
+当前源码提供两个协议 3 可选能力，Host 适配基线为 DSH 0.2.2-rc.3、Session format 4。完整 APP 实施规范见 [智能体团队 APP 详细接入指南](docs/agent-team-app-integration.md)，包含成员与任务完整字段、目录树、视图切换、消息和停止、投影缓存、恢复流程及验收清单。
 
 | 连接 | 请求/推送 | 说明 |
 |---|---|---|
@@ -1472,6 +1476,8 @@ history. Older gateways without the capability continue using one connection.
 | control | `session-status` | `{sessionId,running}`，全局进程内运行状态；初始/重连用 sessions 刷新 |
 
 两个查询都返回 `projectionState: ready | unavailable | migration-required`。没有投影是 null，空目录是 `[]`，空任务板是团队对象中的 `tasks:[]`；迁移提示没有 `asOfSeq`，不能当作精确基线。未找到会话返回 `session/not-found`。查询不激活 Agent、不调用模型。capability 仅表示网关理解协议，不保证 Host 已启用实验性团队插件。
+
+RC.3 宿主的团队投影为 `{enabled,tasks,failure?}`，不再提供历史成员名册。网关在查询、历史/会话快照、控制基线及实时投影中补充 `members:[]`，保留其余原始字段，兼容旧移动端解码；RC.1 的成员数组仍原样转发。缺失任务数组、错误类型的 `members` 等畸形值仍报错。`members:[]` 不表示没有子代理，当前子代理从 `subagentCatalog` 读取；移动端应结合 `enabled` 显示空团队入口，并使用目录的 `name` 展示具名代理。详见 [RC.3 兼容性评估与移动端工作项](docs/dsh-0.2.2-rc.3-compatibility-audit.md)。
 
 新增投影键 `agentTeam/subagentCatalog/subagent/subagentTiming` 同时出现在 `projection-baseline`。上述更新与运行状态不受当前聊天 subscribe 过滤，仅发往 control/legacy。Host control 重建会发送替换基线及失效通知；基线未包含冷会话不表示会话删除。各投影按 `(gatewayId, sessionId, projectionKey)` 管理水位，不能跨会话或跨键比较 seq。初始运行状态从 sessions 查询取得，实时状态不具备持久 seq。
 
@@ -1488,7 +1494,7 @@ history. Older gateways without the capability continue using one connection.
 - conversation：`history/subscribe/message`；control：`session-cancel/tasks/goal`。`goal` 同样支持子地址。其他操作不能仅凭此能力推定支持子地址。
 - `subscribed`、follower 的 snapshot/event/assistant-stream/reset 回显父子地址；切换使用新 `subscriptionId/streamId`。旧 legacy 持久事件可能只有 sessionId。
 - history、tasks、goal、session-cancel 的正常响应及查询失败回显原请求 requestId（如果提供）。`sent` 对子消息额外返回 `messageId`、父子地址以及原 requestId。
-- 子消息内部使用官方专用 continuation 接口；`message.mode` 仍是 queue/steer，不表示生命周期。只有 continuable 能发送与停止。
+- 子消息内部使用官方专用 continuation 接口；RC.2/RC.3 转为新的 `prompt` 请求及 `interruptByUser`，调用前通过官方子会话历史地址验证直接父子关系；RC.1 保留旧接口。移动端继续传递原有父子地址，无需改 RPC。`message.mode` 仍是 queue/steer，不表示生命周期。只有 continuable 能发送与停止。
 - 共享任务来自 Lead 的 `agentTeam.tasks`，负责人字段是 `ownerName`；成员 `todos` 仍是独立内部待办。
 - 普通子目录包含 continuable/one-shot/external/unknown；按父节点逐级读取，不自动递归。
 - 子会话父子关系由 Host 校验，非法关系返回 `subagent/unauthorized` 等错误；无法继续的模式返回 `subagent/not-resumable`。
@@ -1509,3 +1515,162 @@ history. Older gateways without the capability continue using one connection.
 
 完整约束、官方 Host 对不同内容结构的授权限制、移动端共享层及 Android/iOS 实施步骤见
 [生图插件图片接入](docs/generated-images-mobile-integration.md)。
+
+## 手机系统连接器（device-tools-v1）
+
+Mobile message routing uses the authenticated connection's deviceId/gatewayId, not caller-supplied message fields. The existing requestId is correlated with the host-created inbox message ID; the Agent uses the messages actually claimed for its step. Source context is available before system-prompt assembly, without adding markers to user text or changing the wire protocol. Mobile phone_* calls omit deviceId and route directly to that source; a different device ID is rejected. Multiple source devices in one input batch are ambiguous, and an offline source never falls back to another phone. Desktop requests without a mobile source must explicitly select a device. See docs/phone-connectors.md for shortcuts and timing logs.
+
+仅已配对设备的 control/legacy 连接可用。七模块为 calendar、reminders、location、photos、music、health、alarms；不包含通讯录。管理端 `GET /mgw/devices` 返回每台设备持久 permissions 与当前连接 modules；`POST /mgw/devices/:id/permissions` 接收 `{ "permissions": { "calendar": true } }` 布尔补丁，复用本机管理面及 Origin 校验。默认全关闭，重配对清空。
+
+App 发送 `device-tools-register`（type、version=1、requestId、递增 capabilityRevision、modules: [{id,enabled,available}]），可选携带本次手机手动开关的 `permissionChanges` 布尔补丁。网关只更新该配对连接所属设备，开启项要求对应模块 enabled/available，严格排除通讯录。网关返回 `device-tools-registered`（kind、version、requestId、capabilityRevision、connectionLeaseId、permissions、permissionSync=true）。普通重连注册不携带补丁，不根据 enabled 自动恢复已撤销的主机权限。旧网关没有 permissionSync 回执时，App 提示更新网关；保存失败、超时或断线不重放已发送的开启操作。每次注册生成新租约并取消旧调用，主机权限改变推送 `device-tools-permissions`。
+
+网关 `device-tool-invoke` 携带 invocationId、connectionLeaseId、tool、arguments、timeoutMs、sessionId、toolCallId、consentContext。App 校验三层权限后，按用户已开启的连接器持续授权自动执行并返回 `device-tool-result`（type、version、两个 ID、status=success 与 result，或 status=error 与 error.code）。取消为网关 `device-tool-cancel`，App 可返回 `device-tool-cancelled` 或 error/cancelled。所有消息 version=1；结果只接受当前设备、连接、租约与 invocationId。撤权、断线、禁用和超时立即清理 pending，迟到结果丢弃。
+
+参数最多 16 KiB，结果最多 128 KiB，最长 120 秒，单设备最多两个在途调用。日历/提醒/健康范围最多 8×24 小时。照片只接受一张最长边 768 像素、原始 JPEG 不超过 64 KiB 的 metadata-free 缩略图，result.images=[{mediaType,data,width,height}]；data 为规范 base64。Agent 插件将其交给宿主附件服务验证落存，输出持久 image block；不会把 base64 传给模型。其他工具拒绝图片和附件字段。详见 [手机连接器实现与联调](docs/phone-connectors.md)。
+
+
+## Device removal management
+
+`GET /mgw/devices` is the shared active paired-device source for both trusted devices and device permissions, including offline devices. Both views use the same total count and online-first ordering. Revoked devices are absent from both.
+
+`POST /mgw/devices/revoke` accepts `{ "deviceIds": ["id-a", "id-b"] }` and returns `{ "revokedIds": ["id-a", "id-b"], "devices": [...] }` (the remaining active devices with permissions/modules). The ID array must be non-empty and contain non-blank strings of at most 128 characters. Existing management body-size, local-access and Origin checks apply. Repeated or already-removed IDs are harmless; `revokedIds` contains only devices actually removed by this request.
+
+All selected registry records and permissions are persisted in one atomic replacement before any selected connection is closed. Save failure restores the in-memory registry and leaves connections/credentials unchanged. Successful removal cancels native invocations and closes every selected device's WebSocket/RTC channel; removed credentials cannot reconnect. Unselected records and permissions are unchanged. The existing `POST /mgw/devices/:id/revoke` route remains compatible and uses the same persistence behavior.
+
+
+## iPhone 写入与闹钟
+
+模块注册新增可选 `tools` 数组，值必须属于该模块的固定白名单。未声明 tools 的旧客户端仅使用既有工具，不提供新写入。新增 `calendar.create`、`reminders.create`、`alarms.create`、`alarms.list`、`alarms.cancel`；手机与网关需同时更新。网关权限新增 alarms，仍默认关闭。
+
+所有创建及闹钟取消要求 operationId UUID，同一用户操作重试必须复用。iOS 先原子保存 attempted，再调用系统，保存回执后返回结果。重复操作返回原结果或 outcome_unknown，不重复创建。主机对已派发写入的断线、撤权、超时和无效结果返回 outcome_unknown，因为操作可能已经落库。闹钟使用 iOS 26+ AlarmKit 一次性固定时刻调度，仅管理当前主机登记的 Whaleness 闹钟，不管理苹果“时钟”App。
+
+详见 [iPhone 连接器操作](docs/iphone-connector-actions.md)。
+
+
+## Apple Music 资料库浏览
+
+新增 music.library（kind=songs/albums/artists/playlists，query 可选，offset=0..10000，limit=1..50）及 music.play-library（kind=songs/albums/playlists，itemId 为返回的 library: ID）。仅向明确声明对应 tools 的手机派发。旧 music.search/music.play 保留数字 ID 兼容。新工具读取个人资料库，不搜索全网目录；分页与空筛选结果不能当作曲库总数或整库为空，读取错误必须保留为错误。详见 docs/iphone-connector-actions.md。
+
+
+## 地图与精确位置
+
+location 权限模块新增 location.precise、maps.search、maps.geocode、maps.reverse-geocode、maps.directions 和 maps.open。maps.* 也属于 location 模块，注册、权限校验、撤权取消统一使用该映射；只有声明对应 tools 的手机可接收调用。location.current 的两位小数近似结果保持兼容。精确位置依赖系统 fullAccuracy 授权，结果返回实际精度。
+
+地图查询有界返回候选地点或路线，不读取个人收藏、历史和通讯录。maps.open 在新版 Android 返回 ready，仅准备手动点击的地图卡片；iOS 与旧版 Android 的 handoff-requested 回执只表示已安排跳转，均不表示导航已开始。具体参数及真机边界见 docs/iphone-maps-connectors.md。
+
+
+## 持久化地点标记
+
+location 模块新增 maps.markers.create/list/update/delete，手机需明确声明 tools。记录属于来源手机中按主机隔离的 Whaleness 数据，不是苹果地图收藏。创建、修改、删除需要 operationId UUID，重试原样复用。手机在单个 SQLite 事务中提交标记变化和操作回执，历史重试只返回 replayed=true 的原结果；expectedRevision 可检查修改冲突。列表按更新时间分页，每页最多 20 条。沿用位置开关、前台和来源绑定；详情见 docs/iphone-map-markers.md。
+
+
+## 手机连接器登记状态查询
+
+新版 `device-tools-registered` 回执附加 `statusQuery: true` 与 `modules: [{id,enabled,available,tools}]`。modules 是网关实际接受的工具交集，包含关闭或未授权的模块；调用仍需要本机开关、系统授权、主机 permissions、当前前台状态及有效租约。不得把 App 自己声明的 tools 冒充网关确认的能力。
+
+手机在已鉴权的控制通道发送 `{type:"device-tools-status",version:1,requestId}`，网关返回 `{kind:"device-tools-status",version:1,requestId,status:"registered"|"not-registered",statusQuery:true,modules,permissions}`。仅当查询连接就是当前登记 owner 时，返回 registered、当前 connectionLeaseId 与 capabilityRevision；其他连接不能借用同设备旧连接的租约。未登记时 modules 为空，不返回其他 owner 的租约。
+
+查询是只读操作：不更换租约、不改变权限、不取消在途工具，不重新申请系统授权。App 只接受匹配当前 requestId、租约及修订的确认；重新注册、断线后忽略旧响应。页面显示时每 10 秒核验一次，前台才发送请求，单次最多等待 5 秒；查询错误或超时显示未确认，并清除展示的能力清单。用户可刷新或主动重新注册；执行连接器任务期间不允许重新注册打断任务。旧网关无清单时显示未确认，不推断为已注册，也不向未声明查询支持的旧网关持续发送查询。
+
+
+## Apple Music 搜歌与应用卡片
+
+新增原生只读工具 `music.catalog-search`，归属 music，需手机显式声明；参数 query（非空、最多 100 字符），limit 可选（1～20，默认 10）。成功结果 `{items:[{id:"catalog:...",title,artist?,album?,url?}],source:"apple-music-catalog"}`，只包含公开歌曲目录元数据，不代表个人收藏，不调用播放器。失败使用 music_catalog_unavailable、permission_denied 或取消错误，不能伪装成空结果。
+
+`music.library` 的条目新增可选 url，原 library: ID 和播放接口不变。网关校验 URL 为 music.apple.com 的 HTTPS 内容链接，保留专辑链接中的 i 歌曲选择参数；移除其他参数，不接受任意站点、登录页面或将资料库 ID 拼接的链接。
+
+Agent 工具 `phone_music_catalog_search` 和 `phone_music_library` 的结果附加 musicLinks，最多 20 项。助手单独一段输出 `[歌名 · 歌手](官方 URL)`，iPhone 正文渲染为音乐卡片，只有点击才通过 Universal Link 请求打开 Apple Music。无 URL 的本地条目不生成假卡片；打开失败在本机提示，不自动播放或添加曲库。
+
+参见 [iPhone Apple Music 卡片](docs/iphone-music-cards.md)。
+
+
+### 音乐卡片封面元数据
+
+`music.catalog-search` 与 `music.library` 的条目附加可选 artworkURL（HTTPS 的 mzstatic.com 或其子域，最长 2048 字符）和 durationSeconds（有限数值，0～86400）。网关拒绝非法图片源及时长，不代理任意图片 URL。
+
+musicLinks 附加 album、artworkURL、durationSeconds（有数据才返回）及 cardURL。cardURL 在官方 URL 的片段中携带 `dsh-music-card=<base64url JSON>`，JSON 为 `{v:1,title,artist?,album?,artworkURL?,durationSeconds?}`，最多 4096 字节，标题/歌手/专辑各最多 200 个 UTF-16 单元。原 url 保持无片段，用于普通客户端。客户端跳转时去除片段，仅使用外层通过验证的音乐 URL；元数据不得改变目标歌曲。
+
+Agent 优先使用 cardURL 原样输出音乐卡片，缺失时使用 url。客户端封面异步加载，失败显示音乐图标，不影响打开歌曲；普通旧链接仍可展示，无需依赖临时会话缓存。
+
+## 整轮文件改动审阅（workspace-changes-v1）
+
+`hello.capabilities` 包含 `workspace-changes-v1` 时，可读取该轮改变的文件、增删行数及带旧/新行号的 unified diff。网关在设备鉴权后、发送 hello 前探测官方摘要和 diff 路由；探测最多等待 2 秒，失败不影响普通聊天连接，但不声明此能力。支持 WebSocket、WebRTC 与 legacy 单连接；查询属于 **control** 通道，conversation 通道返回 `wrong-channel`。保持 `protocol: 3`、`historyFormatVersion: 4`。
+
+完成的顶层轮次有改动记录时发送：
+
+```json
+{ "kind": "event", "sessionId": "s1", "seq": 160, "time": 1794366000,
+  "event": { "type": "workspace/changes", "turn": 3 } }
+```
+
+历史及 `session-snapshot` 对应原始事件为 `{type:"workspace/changes", seq, time, data:{turn:3}}`。事件只宣布坐标，不内联摘要/diff；按 `gatewayId + sessionId + seq` 幂等合并，同轮取最新事件。
+
+### 改动摘要
+
+```json
+{ "type": "workspace-changes-summary", "requestId": "cs-1", "sessionId": "s1", "seq": 160 }
+```
+
+```json
+{ "kind": "workspace-changes-summary", "requestId": "cs-1", "sessionId": "s1", "seq": 160,
+  "summary": { "turn": 3, "total": 1, "added": 2, "deleted": 1,
+    "files": [{ "path": "DESIGN-SPEC.md", "display": "DESIGN-SPEC.md", "added": 2, "deleted": 1 }] } }
+```
+
+文件可有 `binary:true`、`oversized:true`；这些文件的 0/0 不表示未改变。`total` 可大于列出的 `files.length`，总统计可包含未列出的文件。保留每项**原始数组下标**用于查询，排序后不能改用显示顺序的下标。`display` 用于展示，`path` 可为相对路径或目录外的主机路径，不能作为任意文件下载授权。摘要不返回 Host 的 cwd 或快照对象 ID。
+
+### 单文件 diff
+
+```json
+{ "type": "workspace-changes-diff", "requestId": "cd-1", "sessionId": "s1", "seq": 160, "index": 0 }
+```
+
+```json
+{ "kind": "workspace-changes-diff", "requestId": "cd-1", "sessionId": "s1", "seq": 160, "index": 0,
+  "diff": { "kind": "text", "path": "DESIGN-SPEC.md", "display": "DESIGN-SPEC.md",
+    "before": true, "after": true, "coarse": false,
+    "hunks": [{ "oldStart": 4, "oldLines": 1, "newStart": 4, "newLines": 2,
+      "lines": ["-每段三拍", "+每段四拍", "+所有片段保持原速"] }] } }
+```
+
+`before/after` 表示文件在轮次开始/结束时是否存在。hunk 起始行号从 1 开始；空格前缀同时递增旧/新行号，`-` 只递增旧行号，`+` 只递增新行号。只去掉首个前缀，保留正文空白。`coarse:true` 表示比较超时后按整段替换展示。其他正常结果为 `diff:{kind:"binary"|"oversized",path,display}`，不含 hunks。
+
+### 错误、预算与生命周期
+
+请求要求非空 `requestId`（最多 128 字符）、非空 `sessionId`（最多 2048 字符）、非负安全整数 `seq`，diff 还需非负安全整数 `index`。不接受 `childSessionId`。
+
+错误使用 `{kind:"error",code,message,requestType,requestId,sessionId,seq,index?}`，有效的已提供坐标会回带：
+
+| code | 含义 |
+| --- | --- |
+| `bad-request` | 请求坐标无效 |
+| `workspace-changes-unavailable` | 官方只读路由不可用 |
+| `workspace-changes-missing` | Host 返回 404：记录释放、未记录或下标不存在；不能当作空摘要 |
+| `authentication-required` | Host 拒绝 Peer 认证 |
+| `workspace-changes-failed` | Host 异常、响应格式错误或请求超时 |
+| `workspace-changes-response-too-large` | 超过摘要 1 MiB / diff 4 MiB 的 JSON body 或最终业务帧预算 |
+
+网关校验字段、hunk 前缀与行数，拒绝残缺/异常数据，不截断后冒充完整 diff。查询超时 30 秒，连接断开或插件 Peer 释放时取消；没有独立 wire cancel。WebRTC 使用已有 MGW1 分片，业务载荷与 WebSocket 一致。
+
+这是**轮次开始到结束的净变化**，不是 Git HEAD 差异或单次工具调用预览。非 Git 目录/Git 不可用时只能保证文件工具捕获范围，Shell 改动可能缺失；不承诺子 Agent 独立摘要。Host 的记录保存在 Session 生命周期内，Host 重启/Session dispose 后即便事件仍在历史中也可能返回 missing。不会从手机当前下载的文件重建旧版本。
+
+网关通过固定的 `/api/changes.summary`、`/api/changes.diff` 在进程内携带 Host 创建的 owner Peer 调用官方认证路由，不公开任意 URL 代理或 `changes.open` 主机桌面操作。APP 集成、显示状态与验收见 [文件改动对接方案](docs/file-changes-app-integration.md)。
+
+
+Android 地图入口改为手动跳转：新版 `maps.open` 返回 `status=ready` 和 latitude/longitude/name/mode（directions 时附 transport），不安排外部 Activity。网关仍校验坐标与字段白名单，并附加通用 `mapLinks/cardURL/destination`，由 Agent 输出卡片，用户点击后选择地图应用。不能把 ready 表述成已打开地图或开始导航。原 handoff-requested 回执仍兼容 iOS 与旧版 Android；手机和网关需一起更新以支持 ready。
+
+## 移动端 Team 模式开关（agent-team-mode-v1）
+
+RC.2 及以后的 Host 额外声明 `agent-team-mode-v1`。仅根会话可使用 control 请求：
+
+```json
+{"type":"agent-team-set-enabled","sessionId":"ROOT_ID","requestId":"unique-id","enabled":true}
+```
+
+参数严格限定上述四项，不接受子代理地址。网关复用认证 Peer 调用官方 `agentTeams.setEnabled({agentId,enabled})`，与同一会话的 prompt/preset 保序。宿主持久化完成后再读取真实团队投影，成功回执为：
+
+```json
+{"kind":"agent-team-mode-set","sessionId":"ROOT_ID","requestId":"unique-id","agentTeam":{"enabled":true,"tasks":[],"members":[]},"asOfSeq":42,"projectionState":"ready"}
+```
+
+错误回显 `requestType=agent-team-set-enabled`、sessionId 和 requestId。持久化失败、投影不可确认或权限拒绝均不能当作保存成功。开关以宿主投影为准，不乐观切换；超时或断线后重新查询，不自动重放写入。旧网关无此能力时隐藏可写入口。关闭不会停止或删除子代理，也不删除历史任务。已有 `modelSelection.lastUsed` 的会话关闭前应确认；确认必须绑定原根会话 ID。新对话先创建真实根会话再配置，开关不是全局默认设置。
