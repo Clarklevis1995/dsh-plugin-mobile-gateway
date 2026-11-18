@@ -67,6 +67,13 @@ function loadPanel(locale = 'zh', statusOverrides = {}, languageSettings = {}) {
         data = { permissions: device.permissions }
       }
     }
+    else if (url === '/mgw/background-service') {
+      if (failSave) { failSave = false; ok = false; data = { message: 'service unavailable' } }
+      else {
+        status.backgroundService = { ...status.backgroundService, enabled: JSON.parse(options.body).enabled }
+        data = status.backgroundService
+      }
+    }
     else if (url === '/mgw/connection') {
       const gate = saveGate; saveGate = null
       if (gate) await new Promise((resolve, reject) => {
@@ -1044,4 +1051,29 @@ test('a failed device refresh keeps the visible devices and their saved permissi
     await act(async () => [...api.timers.values()][0]())
     assert.doesNotMatch(JSON.stringify(root.toJSON()), /devices unavailable/)
   } finally { if (root) await act(async () => root.unmount()); api.dispose() }
+})
+
+test('background switch is Linux-only, reflects persisted state and preserves it on failure', async () => {
+  const mac = loadPanel('zh')
+  let root
+  await act(async () => { root = create(React.createElement(mac.DevicePanel)) })
+  assert.equal(root.root.findAllByProps({ 'aria-label': '持久化后台运行' }).length, 0)
+  await act(async () => root.unmount())
+  const api = loadPanel('zh', { platform: 'linux', backgroundService: { available: true, enabled: true } })
+  await act(async () => { root = create(React.createElement(api.DevicePanel)) })
+  const toggle = () => root.root.findByProps({ 'aria-label': '持久化后台运行' })
+  assert.equal(toggle().props.checked, true)
+  await act(async () => toggle().props.onChange({ target: { checked: false } }))
+  assert.equal(toggle().props.checked, false)
+  assert.equal(JSON.parse(api.calls.find(call => call.url === '/mgw/background-service').options.body).enabled, false)
+  api.failNextSave()
+  await act(async () => toggle().props.onChange({ target: { checked: true } }))
+  assert.equal(toggle().props.checked, false)
+  assert.match(JSON.stringify(root.toJSON()), /service unavailable/)
+  await act(async () => root.unmount())
+  const unavailable = loadPanel('zh', { platform: 'linux', backgroundService: { available: false, enabled: false, reason: 'systemd unavailable' } })
+  await act(async () => { root = create(React.createElement(unavailable.DevicePanel)) })
+  assert.equal(toggle().props.disabled, true)
+  assert.match(JSON.stringify(root.toJSON()), /systemd unavailable/)
+  await act(async () => root.unmount())
 })

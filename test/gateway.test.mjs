@@ -799,6 +799,26 @@ function waitFor(pred, timeout) { return new Promise((res) => { const t0 = Date.
       assert.equal(await waitFor(() => controls.some(f => f.requestId === 'preset-locked')
         && controls.some(f => f.kind === 'session-agent-preset-updated' && f.locked), 2000), true)
       assert.equal(controls.find(f => f.requestId === 'preset-locked').code, 'agent-preset/locked')
+      // 真实双通道验证：已有对话但未记录预设，状态查询仍成功并允许续聊。
+      presetSession.agentPreset = null
+      control.send(JSON.stringify({ type: 'session-agent-preset', sessionId: 'preset-session', requestId: 'legacy-preset-state' }))
+      assert.equal(await waitFor(() => controls.some(f => f.requestId === 'legacy-preset-state'), 2000), true)
+      const legacyState = controls.find(f => f.requestId === 'legacy-preset-state')
+      assert.equal(legacyState.kind, 'session-agent-preset')
+      assert.equal(legacyState.agentPreset, null)
+      assert.equal(legacyState.locked, true)
+      const priorPromptCount = api.promptCalls.length
+      conversation.send(JSON.stringify({ type: 'message', sessionId: 'preset-session', requestId: 'legacy-continue', text: '继续旧会话' }))
+      assert.equal(await waitFor(() => conversations.some(f => f.requestId === 'legacy-continue'), 2000), true)
+      assert.equal(conversations.find(f => f.requestId === 'legacy-continue').kind, 'sent')
+      assert.equal(api.promptCalls.length, priorPromptCount + 1)
+      assert.equal(api.promptCalls.at(-1).sessionId, 'preset-session')
+      // 后续独立命令用例以零次 prompt 开始，清理本用例的计数。
+      api.promptCalls.splice(priorPromptCount)
+      control.send(JSON.stringify({ type: 'select-agent-preset', sessionId: 'preset-session', agentPreset: 'standard', requestId: 'legacy-preset-locked' }))
+      assert.equal(await waitFor(() => controls.some(f => f.requestId === 'legacy-preset-locked'), 2000), true)
+      assert.equal(controls.find(f => f.requestId === 'legacy-preset-locked').code, 'agent-preset/locked')
+      presetSession.agentPreset = 'minimal'
       conversation.send(JSON.stringify({ type: 'select-agent-preset', sessionId: 'preset-session', agentPreset: 'standard' }))
       assert.equal(await waitFor(() => conversations.some(f => f.code === 'wrong-channel' && f.requestType === 'select-agent-preset'), 2000), true)
       interactionResults.push(['session preset state, selection, locking and split-channel notifications', true])

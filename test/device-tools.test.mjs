@@ -664,3 +664,61 @@ test('music artwork and metadata are validated and survive serialized card links
   assert.equal(plain.musicLinks[0].artworkURL, undefined)
   assert.ok(plain.musicLinks[0].cardURL)
 })
+
+function healthSummaryV2() {
+  const definitions = {
+    steps: ['count', 'sum'], sleepMinutes: ['min', 'union-duration'], walkingRunningDistance: ['m', 'sum'],
+    flightsClimbed: ['count', 'sum'], activeEnergy: ['kcal', 'sum'], basalEnergy: ['kcal', 'sum'], exerciseMinutes: ['min', 'sum'],
+    heartRate: ['bpm', 'average'], restingHeartRate: ['bpm', 'average'], heartRateVariability: ['ms', 'average'],
+    oxygenSaturation: ['%', 'average'], respiratoryRate: ['breaths/min', 'average'], bodyMass: ['kg', 'latest'],
+  }
+  const metrics = Object.fromEntries(Object.entries(definitions).map(([key, [unit, aggregation]]) => [key, { value: null, unit, aggregation }]))
+  metrics.steps.value = 4321
+  metrics.oxygenSaturation.value = 98
+  metrics.bodyMass = { ...metrics.bodyMass, value: 70, recordedAt: '2026-11-10T08:00:00+08:00' }
+  return { schemaVersion: 2, ...range, steps: 4321, sleepMinutes: null, metrics,
+    coverage: 'authorized-health-data', availability: 'no-data-may-mean-not-shared', collectedAt: range.end }
+}
+
+test('health summaries accept old phones and preserve v2 metrics through the broker', async t => {
+  assert.equal(validateResult('health.daily-summary', { steps: null, sleepMinutes: null }), true)
+  const result = healthSummaryV2()
+  assert.equal(validateResult('health.daily-summary', result), true)
+  const f = fixture(t), c = f.client()
+  f.register(c)
+  f.registry.setPermissions(f.device.id, { health: true })
+  const promise = f.broker.invoke(f.context, 'health.daily-summary', range)
+  f.complete(c, result)
+  assert.deepEqual(await promise, result)
+})
+
+test('health v2 rejects wrong units, forged fields, invalid values and inconsistent legacy fields', () => {
+  const rejects = mutate => {
+    const result = healthSummaryV2()
+    mutate(result)
+    assert.equal(validateResult('health.daily-summary', result), false)
+  }
+  rejects(r => { r.metrics.heartRate.unit = 'Hz' })
+  rejects(r => { r.metrics.bodyMass.aggregation = 'average' })
+  rejects(r => { r.metrics.oxygenSaturation.value = 101 })
+  rejects(r => { r.metrics.activeEnergy.value = -1 })
+  rejects(r => { r.metrics.heartRateVariability.value = Infinity })
+  rejects(r => { r.metrics.respiratoryRate.value = '16' })
+  rejects(r => { r.steps = 0 })
+  rejects(r => { r.metrics.sleepMinutes.value = 1 })
+  rejects(r => { delete r.metrics.heartRate })
+  rejects(r => { r.metrics.attachments = [] })
+  rejects(r => { r.metrics.heartRate.rawSamples = [{ value: 60 }] })
+  rejects(r => { r.attachments = [] })
+  rejects(r => { r.metrics.bodyMass.recordedAt = '2020-01-01T00:00:00Z' })
+  rejects(r => { delete r.metrics.bodyMass.recordedAt })
+  rejects(r => { r.metrics.bodyMass.value = null })
+  rejects(r => { r.end = r.start })
+  rejects(r => { r.end = '2026-12-31T00:00:00Z' })
+  rejects(r => { r.timeZone = 'invalid' })
+  rejects(r => { r.schemaVersion = 3 })
+  const empty = healthSummaryV2()
+  empty.metrics.bodyMass = { value: null, unit: 'kg', aggregation: 'latest' }
+  empty.steps = empty.metrics.steps.value = 0
+  assert.equal(validateResult('health.daily-summary', empty), true)
+})

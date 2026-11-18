@@ -110,6 +110,34 @@ assert.equal((await restarted.api.agentPresets.session({ sessionId: 'queued' }))
 restarted.states.set('unknown-state', { agentPreset: 'standard' })
 await assert.rejects(restarted.api.agentPresets.session({ sessionId: 'unknown-state' }), { code: 'agent-preset/unavailable' })
 
+// 合法的空预设与状态缺失不同；旧会话能续聊，但不能重新选择模式。
+for (const metadata of [{ blank: false, lastPromptAt: 100 }, { blank: true, lastPromptAt: 100 }]) {
+  const legacy = fixture()
+  legacy.states.set('legacy', { agentPreset: null, sessionListMetadata: metadata })
+  const read = () => handleQuery(legacy.api, legacy.api, null, { type: 'session-agent-preset', sessionId: 'legacy', requestId: 'legacy-state' })
+  assert.deepEqual(await read(), { kind: 'session-agent-preset', sessionId: 'legacy', requestId: 'legacy-state', agentPreset: null, locked: true })
+  const refused = await handleQuery(legacy.api, legacy.api, null, { type: 'select-agent-preset', sessionId: 'legacy', agentPreset: 'minimal', requestId: 'legacy-select' })
+  assert.equal(refused.code, 'agent-preset/locked')
+  assert.equal(legacy.calls.some(call => call.namespace === 'agentPresets' && call.method === 'select'), false)
+  assert.equal((await admitMessage(legacy.api, { type: 'message', sessionId: 'legacy', text: '继续旧会话' })).kind, 'sent')
+  assert.equal(legacy.states.get('legacy').agentPreset, null, '不能回填或改写历史预设')
+  assert.equal((await read()).locked, true)
+}
+const blankLegacy = fixture()
+blankLegacy.states.set('blank-legacy', { agentPreset: null, sessionListMetadata: { blank: true, lastPromptAt: null } })
+assert.deepEqual(await blankLegacy.api.agentPresets.session({ sessionId: 'blank-legacy' }), { sessionId: 'blank-legacy', agentPreset: null, locked: false })
+assert.equal((await blankLegacy.api.agentPresets.select({ sessionId: 'blank-legacy', agentPreset: 'minimal' })).agentPreset, 'minimal')
+for (const preset of [undefined, '', ' ', 123, {}, false]) {
+  const invalid = fixture()
+  invalid.states.set('invalid-preset', { ...(preset === undefined ? {} : { agentPreset: preset }), sessionListMetadata: { blank: false, lastPromptAt: 100 } })
+  await assert.rejects(invalid.api.agentPresets.session({ sessionId: 'invalid-preset' }), { code: 'agent-preset/unavailable' })
+}
+for (const metadata of [undefined, { blank: false }, { blank: 'false', lastPromptAt: 100 }]) {
+  const invalid = fixture()
+  invalid.states.set('invalid-metadata', { agentPreset: null, sessionListMetadata: metadata })
+  await assert.rejects(invalid.api.agentPresets.session({ sessionId: 'invalid-metadata' }), { code: 'agent-preset/unavailable' })
+}
+
 // Failed admission is retryable; first-message creation forwards the requested preset.
 const fresh = fixture()
 fresh.setBeforePrompt(async () => { throw new Error('admission failed') })

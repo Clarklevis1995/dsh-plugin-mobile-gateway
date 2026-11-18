@@ -1130,6 +1130,7 @@ DSH 0.1.7-rc.2 的 Agent preset 名册不再包含 `modeSelectionEnabled`。网�
 
 候选项使用 `agent-presets.presets`：显示 `name`（缺失时使用 `id`），提交 `id`；带 `broken` 的项不可选。
 当前值以 `session-agent-preset.agentPreset` 为准，不能用全局 `isDefault` 或 Session header 代替。
+`agentPreset` 可以为 `null`，表示会话没有记录预设（旧会话或未使用预设的配置），属于成功查询；不自动回填当前默认值。`locked` 独立来自持久化会话元数据：`agentPreset: null, locked: true` 的旧会话可继续发送消息，但不可切换模式。客户端应将成功返回的有效 `locked` 视为状态已确认，不以预设是否为空判定发送权限。未锁定且没有记录预设时显示「未记录模式」，保留首次对话前的模式选择能力。
 Host 在同一 Session 内重组 Agent 并持久化选择，不通过修改全局默认模式实现。
 
 首次消息被 gateway 接受后即锁定；已记录的用户输入或 `turn/start` 也会锁定。
