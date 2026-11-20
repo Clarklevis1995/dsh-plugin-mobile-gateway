@@ -315,6 +315,7 @@ function expectRejected(url, options = {}) {
   assert.equal(hello.protocol, 3)
   assert.deepEqual(hello.capabilities, [
     'split-channels',
+    'bot-v1',
     'network-diagnostics-v1',
     'assistant-stream-v1',
     'history-format-version',
