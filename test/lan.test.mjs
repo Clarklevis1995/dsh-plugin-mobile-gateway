@@ -124,6 +124,17 @@ async function waitForLanStatus(base) {
   assert.equal(status.lan.error, null)
   assert.equal(status.lan.urls.length, 1)
   assert.deepEqual(status.tools, { restartWeb: false, stopWeb: false })
+  assert.equal(status.backgroundService.supported, false)
+  for (const [origin, body, expected] of [
+    [base, { enabled: true }, 409],
+    [base, { enabled: 'true' }, 400],
+    ['https://other.example', { enabled: true }, 403],
+  ]) {
+    const response = await fetch(`${base}/mgw/background-service`, {
+      method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    })
+    assert.equal(response.status, expected)
+  }
   for (const action of ['restart-web', 'stop-web']) {
     const unavailable = await fetch(`${base}/mgw/tools/${action}`, {
       method: 'POST', headers: { Origin: base },

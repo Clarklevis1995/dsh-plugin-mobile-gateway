@@ -8,7 +8,7 @@
 
 # dsh-plugin-mobile-gateway
 
-> **v0.12.1 · pending release** — Targets DSH 0.2.2-rc.3. Fixes team projections without members and subagent continuation/interrupt compatibility; adds per-session Team mode control. Requires Node.js 24.9+. See the [changelog](CHANGELOG.md) and [RC.3 compatibility and mobile guide](docs/dsh-0.2.2-rc.3-compatibility-audit.md) (Chinese).
+> **v0.12.2 · pending release** — Adds persistent background operation on Linux with systemd, fixes queries for legacy sessions with no recorded Agent Preset, and supports health summary v2 metrics. Targets DSH 0.2.2-rc.3 and requires Node.js 24.9+. See the [changelog](CHANGELOG.md).
 
 A third-party mobile gateway for DeepSeek Harness with device authentication. Supports sessions and live events; queued-message synchronization, editing, deletion, and Steer; bidirectional session archiving and renaming; stopping and resuming generation; task lists and the current Goal; server-driven command and skill menus; human-in-the-loop workflows; and image and file transfers. After installation, a Mobile Devices entry appears in the Harness WebUI sidebar for enabling the gateway, generating pairing QR codes, and managing trusted devices.
 
@@ -408,3 +408,7 @@ Verify real WAV validation against the installed official plugin (test recogniti
 ```bash
 DSH_INSTALL_ROOT=/absolute/path/to/@deepseek-ai/dsh node test/speech-official.test.mjs
 ```
+
+### Linux background service
+
+On Linux with systemd, enable **Persistent background service** under the gateway’s General settings to keep DSH Web running after SSH logout and start it after reboot. Enabling briefly restarts DSH Web. Disabling cancels automatic startup while leaving the current process running. See the [setup and troubleshooting guide](docs/linux-background-service.md) (Chinese).

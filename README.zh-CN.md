@@ -8,7 +8,7 @@
 
 # dsh-plugin-mobile-gateway
 
-> **v0.12.1 · 待发布** — 适配 DSH 0.2.2-rc.3，修复团队投影缺少 members 的报错及子代理继续对话/中断接口，新增会话级 Team 模式开关。需要 Node.js 24.9+。详见 [版本记录](CHANGELOG.md) 与 [RC.3 兼容性及 App 适配说明](docs/dsh-0.2.2-rc.3-compatibility-audit.md)。
+> **v0.12.2 · 待发布** — 新增 Linux systemd 持久化后台运行，修复旧会话空 Agent Preset 的查询兼容性，支持健康摘要 v2 指标。适配 DSH 0.2.2-rc.3，需要 Node.js 24.9+。详见 [版本记录](CHANGELOG.md)。
 
 > 当前源码增加实验性 **P2P 优先** 传输：开启 `webrtc.enabled` 后，支持该能力的新客户端通过现有鉴权 WebSocket 协商双 WebRTC DataChannel，准备失败整组回退 WebSocket。首次使用默认“局域网直连”，通过同一 Wi-Fi 下的主机地址使用 WebSocket；可在“连接与配对 → 连接方案”主动选择“公网入口 + 优先 P2P（实验）”或其他方案，已保存的选择会保留；旧客户端保持原行为。**网关可联调，Android/iOS App 待接入，尚未发布**。详见 [App 接入契约](docs/webrtc-app-integration.md)、[运行库决策](docs/webrtc-runtime-decision.md) 和 [验收记录](docs/webrtc-acceptance.md)。
 
@@ -423,3 +423,7 @@ npm test
 ```bash
 DSH_INSTALL_ROOT=/absolute/path/to/@deepseek-ai/dsh node test/speech-official.test.mjs
 ```
+
+### Linux 持久化后台运行
+
+在 Linux 的网关「通用」设置中开启「持久化后台运行」，通过 systemd 用户服务托管 DSH Web，SSH 断开后继续运行，服务器重启后自动启动。开启时会短暂重启；关闭后取消自动启动，当前进程继续运行。要求服务器使用 systemd。详见[配置与排障说明](docs/linux-background-service.md)。
