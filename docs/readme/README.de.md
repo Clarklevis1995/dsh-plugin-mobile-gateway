@@ -8,7 +8,9 @@
 
 # dsh-plugin-mobile-gateway
 
-> **v0.12.1 · Veröffentlichung in Vorbereitung** — Unterstützt DSH 0.2.2-rc.3 und Node.js 24.9+. Korrigiert Team-Projektionen und das Fortsetzen/Unterbrechen von Subagenten; ergänzt die Team-Modus-Steuerung pro Sitzung. [Changelog](../../CHANGELOG.md) · [RC.3 / App](../dsh-0.2.2-rc.3-compatibility-audit.md)
+> Current compatibility baseline: **DSH 0.2.2-rc.5**. [RC.5 audit / App checks](../dsh-0.2.2-rc.5-compatibility-audit.md) (中文).
+
+> **v0.12.3 · Veröffentlichung in Vorbereitung** — Unterstützt DSH 0.2.2-rc.5 und Node.js 24.9+. Bewahrt Ablehnungscodes und Begründungen des Modells und korrigiert fehlende Token-Nutzungsdaten fehlgeschlagener Anfragen im kompakten Verlauf. [Changelog](../../CHANGELOG.md) · [RC.5 / App](../dsh-0.2.2-rc.5-compatibility-audit.md)
 
 Mobiles Drittanbieter-Gateway für DeepSeek Harness mit Geräteauthentifizierung. Sitzungen und Live-Ereignisse, Warteschlangen mit Bearbeiten/Löschen/Steer, bidirektionales Archivieren/Umbenennen, Generierung stoppen/fortsetzen, Aufgaben und aktuelles Goal, servergesteuerte Befehls-/Skill-Menüs, menschliche Freigaben sowie Bild-/Dateiübertragung. Nach Installation bietet Mobilgeräte in WebUI Gateway-Schalter, Kopplungs-QR und vertrauenswürdige Geräte.
 

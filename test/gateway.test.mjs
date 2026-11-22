@@ -540,6 +540,23 @@ function waitFor(pred, timeout) { return new Promise((res) => { const t0 = Date.
   assert.deepEqual(got.find(frame => frame.seq === 9004).event.reasonDetails.error, retry.failure)
   interactionResults.push(['v4 failed tool and attempt payloads', true])
 
+  const refused = { code: 'CONTENT_REFUSED', message: 'DeepSeek refused to answer under its content safety review' }
+  const refusalUsage = { inputTokens: 12, outputTokens: 5, totalTokens: 17 }
+  listeners['session/event']({ id: 's1' }, { type: 'assistant/attempt', seq: 9100, time: 5, data: {
+    turn: 2, step: 0, stream: [
+      { type: 'chunk', time: 4, chunk: { type: 'usage', usage: { inputTokens: 12, outputTokens: 1 } } },
+      { type: 'chunk', time: 5, chunk: { type: 'usage', usage: refusalUsage } },
+      { type: 'chunk', time: 5, chunk: { type: 'finish',
+      reason: { kind: 'error', failure: refused } } }],
+  } })
+  listeners['session/event']({ id: 's1' }, { type: 'turn/end', seq: 9101, time: 6,
+    data: { turn: 2, reason: { kind: 'error', error: refused } } })
+  assert.equal(await waitFor(() => got.some(frame => frame.seq === 9101), 2000), true)
+  assert.deepEqual(got.find(frame => frame.seq === 9100).event.finish.failure, refused)
+  assert.deepEqual(got.find(frame => frame.seq === 9100).event.usage, refusalUsage)
+  assert.deepEqual(got.find(frame => frame.seq === 9101).event.reasonDetails.error, refused)
+  interactionResults.push(['RC.5 refusal code and explanation survive live forwarding', true])
+
   listeners['session/event']({ id: 's1' }, { type: 'user/message', seq: 8999, time: 5, data: { id: 'quoted-message', source: { kind: 'user', rpcId: 'quote-replay' }, content: [{ type: 'text', text: '> 来自 Web 的引用\n\n回复' }] } })
   await waitFor(() => got.some(frame => frame.seq === 8999), 2000)
   assert.deepEqual(got.find(frame => frame.seq === 8999).event.textParts[0], { type: 'quote', text: '来自 Web 的引用' })

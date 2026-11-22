@@ -1,6 +1,6 @@
 # dsh Mobile Gateway — 移动业务与传输协议参考
 
-移动端通过经过设备鉴权的 WebSocket 连接与 dsh 通信：订阅 agent 实时输出、发送文字和图片、处理 Human-in-the-loop 提问与操作审批、查询会话/工作区/历史、调整会话配置。本协议由持久化插件 `dsh-plugin-mobile-gateway` 实现。当前源码适配 DSH 0.2.2-rc.3 / Session format 4；移动端实时流接入见 [rc.2 接入说明](docs/dsh-rc2-mobile-integration.md)，插件管理见 [RC2 插件管理对接方案](docs/dsh-0.2.0-rc.2-plugin-management-mobile-integration.md)。
+移动端通过经过设备鉴权的 WebSocket 连接与 dsh 通信：订阅 agent 实时输出、发送文字和图片、处理 Human-in-the-loop 提问与操作审批、查询会话/工作区/历史、调整会话配置。本协议由持久化插件 `dsh-plugin-mobile-gateway` 实现。当前源码适配 DSH 0.2.2-rc.5 / Session format 4；移动端实时流接入见 [rc.2 接入说明](docs/dsh-rc2-mobile-integration.md)，插件管理见 [RC2 插件管理对接方案](docs/dsh-0.2.0-rc.2-plugin-management-mobile-integration.md)。
 
 DSH Remote 要求的 `peer` 由网关在 Host 内部创建并注入，身份沿用已配对设备的本机用户权限，生命周期随插件释放；移动端请求帧不增加 `peer` 字段，`dsh-mobile-v1` 协议不变。
 
@@ -1265,7 +1265,9 @@ DSH Web 的“深度求索中，用时 22 秒 ···”是客户端文案，不�
 
 | 版本 | 新增 |
 |---|---|
-| v0.12.1（待发布） | 适配 DSH 0.2.2-rc.3；修复团队投影及子代理继续/中断兼容性，新增 agent-team-mode-v1 会话开关；协议 3、Session 格式 4 不变 |
+| v0.12.3（待发布） | 适配 DSH 0.2.2-rc.5；保留 CONTENT_REFUSED 错误和原因，修复失败请求精简历史的累计用量丢失；协议 3、Session 格式 4 不变 |
+| v0.12.2 | 新增 Linux systemd 后台运行，修复空 Agent Preset 查询兼容性，扩展健康摘要 v2 |
+| v0.12.1 | 适配 DSH 0.2.2-rc.3；修复团队投影及子代理继续/中断兼容性，新增 agent-team-mode-v1 会话开关；协议 3、Session 格式 4 不变 |
 | v0.12.0 | 适配 DSH 0.2.2-rc.1 与 Node.js 24.9+；新增聊天引用及排队引用编辑、宿主级自动化任务、插件版本查询/更新/详情、跟随 DSH 的界面语言；修复批量投影与图片读取；完整信息见 [版本记录](CHANGELOG.md) |
 | v0.10.4 | 精简 `sessions` 列表投影，仅保留 `asOfSeq` 和 `values.title`，修复大量会话通过公网隧道传输时超时的问题；保留会话元信息和历史完整投影，现有移动客户端无需配套修改 |
 | v0.10.3 | 适配 DSH 0.2.1-rc.2；为 Remote 请求及实时订阅补齐 Connection Peer，修复读取 `signal` 时的空值报错，并随网关停止释放 Peer；移动端协议保持不变 |
@@ -1466,7 +1468,7 @@ history. Older gateways without the capability continue using one connection.
 
 ## 智能体团队与子会话（agent-team-v1 / subagent-conversations-v1）
 
-当前源码提供两个协议 3 可选能力，Host 适配基线为 DSH 0.2.2-rc.3、Session format 4。完整 APP 实施规范见 [智能体团队 APP 详细接入指南](docs/agent-team-app-integration.md)，包含成员与任务完整字段、目录树、视图切换、消息和停止、投影缓存、恢复流程及验收清单。
+当前源码提供两个协议 3 可选能力，Host 适配基线为 DSH 0.2.2-rc.5、Session format 4。完整 APP 实施规范见 [智能体团队 APP 详细接入指南](docs/agent-team-app-integration.md)，包含成员与任务完整字段、目录树、视图切换、消息和停止、投影缓存、恢复流程及验收清单。
 
 | 连接 | 请求/推送 | 说明 |
 |---|---|---|
@@ -1677,3 +1679,9 @@ RC.2 及以后的 Host 额外声明 `agent-team-mode-v1`。仅根会话可使用
 ```
 
 错误回显 `requestType=agent-team-set-enabled`、sessionId 和 requestId。持久化失败、投影不可确认或权限拒绝均不能当作保存成功。开关以宿主投影为准，不乐观切换；超时或断线后重新查询，不自动重放写入。旧网关无此能力时隐藏可写入口。关闭不会停止或删除子代理，也不删除历史任务。已有 `modelSelection.lastUsed` 的会话关闭前应确认；确认必须绑定原根会话 ID。新对话先创建真实根会话再配置，开关不是全局默认设置。
+
+## DSH 0.2.2-rc.5 兼容性
+
+失败的 `assistant/attempt` 实时事件与精简历史可携带顶层 `usage`，来自宿主最后一条累计 usage chunk；已有顶层 usage 优先。客户端按事件更新该请求用量，不能将多条累计快照相加，缺失不等于零。当前 App 共享轨迹投影支持 `event.usage` 与 `raw.usage` 回退。
+
+移动协议仍为 3，Session 格式仍为 4，既有团队、任务、插件、附件和语音 RPC 无需更改。DeepSeek 拒答可在 assistant finish.failure 或 turn/end 的 reasonDetails.error 中返回 `CONTENT_REFUSED`；保留宿主 message/code，不能改写为网络错误，也不能据此自动重连重发。搜索默认提供方按模型路由选择，非固定 Search API；详见 [RC.5 评估、搜索迁移与 App 验收](docs/dsh-0.2.2-rc.5-compatibility-audit.md)。

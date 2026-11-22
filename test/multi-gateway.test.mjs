@@ -128,6 +128,18 @@ try {
   assert.equal((await a.request('status')).data.gatewayEnabled, true)
   passed('legacy startup config is persistent; independent instances have distinct identities')
 
+  assert.equal(status.phoneContextEnabled, true)
+  for (const body of [null, [], {}, { enabled: 'false' }, { enabled: false, extra: true }]) {
+    assert.equal((await a.request('phone-context', body)).status, 400)
+  }
+  assert.equal((await a.request('phone-context', { enabled: false })).data.phoneContextEnabled, false)
+  assert.equal((await a.request('status')).data.gatewayEnabled, true)
+  assert.equal((await b.request('status')).data.phoneContextEnabled, true)
+  a.restart({ phoneContextEnabled: true })
+  assert.equal((await a.request('status')).data.phoneContextEnabled, false)
+  assert.equal((await a.request('phone-context', { enabled: true })).data.phoneContextEnabled, true)
+  passed('phone context setting is persisted, isolated and independent of gateway connectivity')
+
   for (const body of [{ mode: 'invalid' }, { mode: null }, null, [], {}, { mode: 'persistent', enabled: true }]) {
     assert.equal((await a.request('gateway', body)).status, 400)
   }
@@ -224,6 +236,8 @@ try {
   fs.unlinkSync(savePath)
   fs.mkdirSync(savePath)
   try {
+    assert.equal((await a.request('phone-context', { enabled: false })).status, 500)
+    assert.equal((await a.request('status')).data.phoneContextEnabled, true)
     assert.equal((await a.request('gateway', { mode: 'persistent' })).status, 500)
     assert.equal((await a.request('status')).data.gatewayMode, 'temporary')
   } finally {

@@ -11,6 +11,8 @@
         # Secure by default: every mobile WebSocket must authenticate with a
         # paired device credential. Pair/revoke APIs remain local-machine only.
         gatewayEnabled: false
+        # 管理面板可独立关闭连接器说明和 phone_* 工具；已保存的选择优先。
+        phoneContextEnabled: true
         # Optional startup mode: disabled | temporary | persistent.
         # Saved management-UI choices take precedence over startup config.
         # gatewayMode: persistent

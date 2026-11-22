@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { assistantFinish, toolResultDetails, turnReasonDetails } from '../lib/session-event-details.mjs'
+import { assistantFinish, assistantUsage, toolResultDetails, turnReasonDetails } from '../lib/session-event-details.mjs'
 import { handleQuery } from '../lib/index.mjs'
 
 const tail = '\n[stderr]\nOperation not permitted\n[sandbox: file access denied under workspace-write mode]\n[exit code: 1]'
@@ -28,3 +28,27 @@ assert.equal(history.events[0].data.outputTruncated, true)
 assert.ok(history.events[0].data.message.content[0].text.length < 2100)
 assert.equal(data.message.content[0].text, output)
 console.log('SESSION EVENT DIAGNOSTICS TESTS PASSED')
+
+// RC.4/RC.5 将拒答从 MALFORMED_RESPONSE 区分为 CONTENT_REFUSED。
+// 精简历史不得在移除 stream 时丢失拒答原因，不能将其降为网络错误。
+const refused = { message: 'DeepSeek refused to answer under its content safety review: blocked image', code: 'CONTENT_REFUSED' }
+const billed = { inputTokens: 12, outputTokens: 5, totalTokens: 20, cacheReadTokens: 3 }
+const attempt = { type: 'assistant/attempt', seq: 2, time: 2, data: { turn: 1, step: 0,
+  stream: [
+    { type: 'chunk', time: 1, chunk: { type: 'usage', usage: { inputTokens: 12, outputTokens: 1 } } },
+    { type: 'chunk', time: 2, chunk: { type: 'usage', usage: billed } },
+    { type: 'chunk', time: 2, chunk: { type: 'finish', reason: { kind: 'error', failure: refused } } },
+  ] } }
+const ended = { type: 'turn/end', seq: 3, time: 3, data: { turn: 1, reason: { kind: 'error', error: refused } } }
+const refusalHistory = await handleQuery({ sessions: { history: async () => ({ historyFormatVersion: 4,
+  events: [{ event: attempt }, { event: ended }] }) } }, null, null,
+{ type: 'history', sessionId: 'refused-session', view: 'conversation' })
+assert.deepEqual(refusalHistory.events[0].data.finish, { kind: 'error', failure: refused })
+assert.deepEqual(turnReasonDetails(refusalHistory.events[1].data.reason), { kind: 'error', error: refused })
+assert.equal('stream' in refusalHistory.events[0].data, false)
+assert.deepEqual(refusalHistory.events[0].data.usage, billed)
+assert.deepEqual(assistantUsage(attempt.data), billed)
+assert.deepEqual(assistantUsage({ ...attempt.data, usage: { totalTokens: 20 } }), { totalTokens: 20 })
+assert.equal(assistantUsage({ stream: [] }), undefined)
+assert.deepEqual(assistantUsage({ stream: [{ type: 'chunk', chunk: { type: 'usage', usage: { inputTokens: 0, outputTokens: 0 } } }] }), { inputTokens: 0, outputTokens: 0 })
+console.log('RC.5 REFUSAL HISTORY PRESERVATION PASSED')

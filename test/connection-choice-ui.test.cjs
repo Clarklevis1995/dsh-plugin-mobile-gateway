@@ -10,7 +10,7 @@ function loadPanel(locale = 'zh', statusOverrides = {}, languageSettings = {}) {
   let api, sequence = 0, failSave = false, failStatus = false, statusGate = null, deviceGate = null, statusBodyGate = null, saveGate = null, failDevices = false
   const calls = [], timers = new Map(), timeouts = new Map()
   let status = {
-    platform: 'darwin', gatewayEnabled: true, gatewayMode: 'persistent', requireAuth: true,
+    platform: 'darwin', gatewayEnabled: true, gatewayMode: 'persistent', requireAuth: true, phoneContextEnabled: true,
     pairingRoute: 'lan', wsPath: '/ws/mobile', publicUrl: 'wss://gateway.example/ws/mobile',
     lan: { listening: true, enabled: true, urls: ['ws://10.23.45.67:3081/ws/mobile'], port: 3081 },
     cloudflare: { supported: true, enabled: false },
@@ -66,6 +66,10 @@ function loadPanel(locale = 'zh', statusOverrides = {}, languageSettings = {}) {
         device.permissions = { ...device.permissions, ...JSON.parse(options.body).permissions }
         data = { permissions: device.permissions }
       }
+    }
+    else if (url === '/mgw/phone-context') {
+      if (failSave) { failSave = false; ok = false; data = { message: 'context save failed' } }
+      else { status = { ...status, phoneContextEnabled: JSON.parse(options.body).enabled }; data = { phoneContextEnabled: status.phoneContextEnabled } }
     }
     else if (url === '/mgw/background-service') {
       if (failSave) { failSave = false; ok = false; data = { message: 'service unavailable' } }
@@ -1075,5 +1079,24 @@ test('background switch is Linux-only, reflects persisted state and preserves it
   await act(async () => { root = create(React.createElement(unavailable.DevicePanel)) })
   assert.equal(toggle().props.disabled, true)
   assert.match(JSON.stringify(root.toJSON()), /systemd unavailable/)
+  await act(async () => root.unmount())
+})
+
+test('phone connector model context switch saves, preserves state on failure, and reflects reload', async () => {
+  const api = loadPanel('zh')
+  let root
+  await act(async () => { root = create(React.createElement(api.DevicePanel)) })
+  const toggle = () => root.root.findByProps({ 'aria-label': '向模型提供手机连接器', role: 'switch' })
+  assert.equal(toggle().props.checked, true)
+  await act(async () => toggle().props.onChange())
+  assert.equal(toggle().props.checked, false)
+  assert.equal(JSON.parse(api.calls.find(call => call.url === '/mgw/phone-context').options.body).enabled, false)
+  api.failNextSave()
+  await act(async () => toggle().props.onChange())
+  assert.equal(toggle().props.checked, false)
+  assert.match(JSON.stringify(root.toJSON()), /context save failed/)
+  await act(async () => root.unmount())
+  await act(async () => { root = create(React.createElement(api.DevicePanel)) })
+  assert.equal(toggle().props.checked, false)
   await act(async () => root.unmount())
 })

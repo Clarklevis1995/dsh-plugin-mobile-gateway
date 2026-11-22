@@ -8,7 +8,9 @@
 
 # dsh-plugin-mobile-gateway
 
-> **v0.12.2 · 待发布** — 新增 Linux systemd 持久化后台运行，修复旧会话空 Agent Preset 的查询兼容性，支持健康摘要 v2 指标。适配 DSH 0.2.2-rc.3，需要 Node.js 24.9+。详见 [版本记录](CHANGELOG.md)。
+> RC.5 的变更范围、搜索迁移与 App 验收见 [RC.5 兼容性评估](docs/dsh-0.2.2-rc.5-compatibility-audit.md)。
+
+> **v0.12.3 · 待发布** — 适配 DSH 0.2.2-rc.5，保留模型拒答的错误码与原因，修复失败请求在精简历史中丢失 token 用量的问题。需要 Node.js 24.9+。详见 [版本记录](CHANGELOG.md) 与 [RC.5 兼容性评估](docs/dsh-0.2.2-rc.5-compatibility-audit.md)。
 
 > 当前源码增加实验性 **P2P 优先** 传输：开启 `webrtc.enabled` 后，支持该能力的新客户端通过现有鉴权 WebSocket 协商双 WebRTC DataChannel，准备失败整组回退 WebSocket。首次使用默认“局域网直连”，通过同一 Wi-Fi 下的主机地址使用 WebSocket；可在“连接与配对 → 连接方案”主动选择“公网入口 + 优先 P2P（实验）”或其他方案，已保存的选择会保留；旧客户端保持原行为。**网关可联调，Android/iOS App 待接入，尚未发布**。详见 [App 接入契约](docs/webrtc-app-integration.md)、[运行库决策](docs/webrtc-runtime-decision.md) 和 [验收记录](docs/webrtc-acceptance.md)。
 
@@ -17,7 +19,7 @@ DeepSeek Harness 的第三方设备鉴权移动网关，支持会话与实时事
 
 > RC.3 团队投影与子代理控制接口已补充兼容，升级风险及移动端后续工作见 [RC.3 兼容性评估](docs/dsh-0.2.2-rc.3-compatibility-audit.md)。
 
-> 当前源码以 **DSH 0.2.2-rc.3** 为适配基线，需要 Connection Peer 接口，使用 Session format 4；旧版历史游标需重新取得基线。
+> 当前源码以 **DSH 0.2.2-rc.5** 为适配基线，需要 Connection Peer 接口，使用 Session format 4；旧版历史游标需重新取得基线。
 >
 > v0.12.0 新增有序聊天引用、宿主级自动化任务、插件更新与详情、DSH 语言同步，适配批量投影与图片读取。需要 Node.js 24.9+。移动端按 [0.2.2-rc.1 详细接入说明](docs/dsh-0.2.2-rc.1-mobile-integration.md) 实施。
 >
@@ -47,7 +49,7 @@ DeepSeek Harness 的第三方设备鉴权移动网关，支持会话与实时事
 
 ## 协议与 DSH 兼容层
 
-移动端连接的是本项目维护的 `dsh-mobile-v1`，不是 DSH 的内部 Remote 协议。插件内部通过独立 Host Adapter 对接 DSH 0.2.2-rc.3 的 Remote Gateway；Session、Workspace、Settings、Commands、Goals、Schedule、Permission Presets、Plugin Manager 等 namespace 和严格参数只存在于该适配层。插件管理的请求帧及 DSH Mobile 页面方案见 [RC2 插件管理对接方案](docs/dsh-0.2.0-rc.2-plugin-management-mobile-integration.md)。
+移动端连接的是本项目维护的 `dsh-mobile-v1`，不是 DSH 的内部 Remote 协议。插件内部通过独立 Host Adapter 对接 DSH 0.2.2-rc.5 的 Remote Gateway；Session、Workspace、Settings、Commands、Goals、Schedule、Permission Presets、Plugin Manager 等 namespace 和严格参数只存在于该适配层。插件管理的请求帧及 DSH Mobile 页面方案见 [RC2 插件管理对接方案](docs/dsh-0.2.0-rc.2-plugin-management-mobile-integration.md)。
 
 DSH 0.2.1-rc.2 要求每次 Remote 调用携带 `peer`。网关通过 `ctx.connection.createPeer()` 创建一个随插件释放的本机用户 Peer，普通请求、首帧读取和实时订阅都由 Host Adapter 注入它；移动端不能设置调用方身份。问答与审批继续由网关的 Host 监听器处理。旧网关漏传此字段时会出现 `Cannot read properties of undefined (reading 'signal')`，升级 DSH 后需重新安装本源码版本并重启 `dsh web`，手机无需更改协议。
 

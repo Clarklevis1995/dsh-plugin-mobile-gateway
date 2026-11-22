@@ -10,11 +10,11 @@ import { apply, withMapLinks, withMusicLinks } from '../lib/phone-tools.mjs'
 const require = createRequire(import.meta.url)
 const { createRegistry } = require('../lib/devices.js')
 const range = { start: '2026-11-10T00:00:00+08:00', end: '2026-11-11T00:00:00+08:00', timeZone: 'Asia/Shanghai' }
-function fixture(t) {
+function fixture(t, options = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phone-tools-'))
   const file = path.join(dir, 'devices.json'), registry = createRegistry(file)
   const { device, token } = registry.claimPairing(registry.createPairing().code, 'installation-1', 'Phone')
-  const broker = createDeviceTools({ registry })
+  const broker = createDeviceTools({ registry, ...options })
   t.after(() => { broker.dispose(); fs.rmSync(dir, { recursive: true, force: true }) })
   function client(generation = 1, deviceId = device.id) {
     return { deviceId, generation, readyState: 1, mobileChannel: 'control', frames: [], sendFrame(frame) { this.frames.push(frame) } }
@@ -721,4 +721,64 @@ test('health v2 rejects wrong units, forged fields, invalid values and inconsist
   empty.metrics.bodyMass = { value: null, unit: 'kg', aggregation: 'latest' }
   empty.steps = empty.metrics.steps.value = 0
   assert.equal(validateResult('health.daily-summary', empty), true)
+})
+
+test('connector context off cancels pending work, preserves registration and permissions, and can resume', async t => {
+  let enabled = true
+  const f = fixture(t, { contextEnabled: () => enabled }), c = f.client()
+  f.register(c)
+  f.broker.handle(c, { type: 'device-tools-register', version: 1, requestId: 'writes', capabilityRevision: 2,
+    modules: [{ id: 'calendar', enabled: true, available: true, tools: ['calendar.busy'] },
+      { id: 'reminders', enabled: true, available: true, tools: ['reminders.create'] }] })
+  const lease = c.frames.at(-1).connectionLeaseId
+  f.registry.setPermissions(f.device.id, { calendar: true, reminders: true })
+  const read = f.broker.invoke(f.context, 'calendar.busy', range)
+  const write = f.broker.invoke({ ...f.context, toolCallId: 'write' }, 'reminders.create', { title: 'fixture', timeZone: 'Asia/Shanghai', operationId: 'b6c7e70e-a19a-4af0-85e6-cc550f2246bb' })
+  const readStopped = assert.rejects(read, /phone_context_disabled/)
+  const writeUnknown = assert.rejects(write, /outcome_unknown/)
+  enabled = false; f.broker.contextChanged()
+  await readStopped; await writeUnknown
+  assert.equal(f.broker.phoneContextEnabled(), false)
+  assert.equal(c.frames.filter(frame => frame.kind === 'device-tool-cancel').length, 2)
+  assert.equal(f.broker.list()[0].connectorStatus, 'ready')
+  assert.equal(f.registry.list()[0].permissions.calendar, true)
+  await assert.rejects(f.broker.invoke(f.context, 'calendar.busy', range), /phone_context_disabled/)
+  enabled = true
+  const next = f.broker.invoke(f.context, 'calendar.busy', range)
+  f.complete(c, { busyIntervals: [] }, lease)
+  assert.deepEqual(await next, { busyIntervals: [] })
+})
+
+test('connector context switch hides all phone tools and prompt on the source gateway only', async t => {
+  const { beginPhoneMessage } = await import('../lib/phone-request-sources.mjs')
+  const definitions = new Map(), conditions = new Map(), listeners = new Map(), contexts = []
+  let enabled = true, invoked = 0
+  const old = globalThis[BROKERS]
+  globalThis[BROKERS] = new Map([
+    ['context-g1', { phoneContextEnabled: () => enabled, list: () => [{ id: 'source', name: 'Phone', online: true, permissions: {}, modules: {} }], invoke: async () => { invoked++; return { busyIntervals: [] } } }],
+    ['context-g2', { phoneContextEnabled: () => true, list: () => [] }],
+  ])
+  t.after(() => { globalThis[BROKERS] = old })
+  const ctx = { on: (name, fn) => listeners.set(name, fn), systemPrompt: { context: value => contexts.push(value) },
+    tools: { register: (definition, options) => { definitions.set(definition.name, definition); conditions.set(definition.name, options.when) } }, attachments: {} }
+  apply(ctx)
+  const agent = { id: 'connector-context-session' }, message = { id: 'msg', source: { kind: 'user', rpcId: 'connector-context-request' } }
+  const done = beginPhoneMessage(agent.id, message.source.rpcId, { gatewayId: 'context-g1', deviceId: 'source' })
+  listeners.get('agent/inbox/inserted')({ agent, message }); done()
+  listeners.get('agent/inbox/claimed')({ agent, message, turn: 1 })
+  assert.match(contexts[0].text({ agent }), /phone_/)
+  assert.ok(conditions.size > 10)
+  for (const when of conditions.values()) assert.equal(when({ agent }), true)
+  enabled = false
+  assert.equal(contexts[0].text({ agent }), '')
+  for (const when of conditions.values()) assert.equal(when({ agent }), false)
+  const exec = { agent, callId: 'cached-call', signal: new AbortController().signal }
+  await assert.rejects(definitions.get('phone_calendar_busy').execute(range, exec), /phone_context_disabled/)
+  await assert.rejects(definitions.get('phone_devices').execute({}, exec), /phone_context_disabled/)
+  assert.equal(invoked, 0)
+  const scoped = []
+  apply({ ...ctx, tools: { register: (definition, options) => scoped.push(options.when) } }, { gatewayId: 'context-g2' })
+  for (const when of scoped) assert.equal(when({ agent: { id: 'desktop' } }), true)
+  enabled = true
+  for (const when of conditions.values()) assert.equal(when({ agent }), true)
 })
