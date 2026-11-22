@@ -85,8 +85,20 @@ const { updatedAt, ...withoutRevision } = task
 assert.equal((await query({ type: 'schedule-update', sessionId: 's1', id: 't1', expected: withoutRevision, title: '新标题' })).updated, true)
 assert.equal((await query({ type: 'schedule-update', id: 't1', expected: { ...withoutRevision, prompt: 'stale' }, title: '新标题' })).code, 'schedule_conflict')
 const beforeScope = calls.length
-assert.equal((await query({ ...edit, sessionId: 's2' })).code, 'schedule_not_found')
+assert.equal((await query({ ...edit, sessionId: 's2' })).code, 'schedule_out_of_scope')
 assert.equal(calls.length, beforeScope + 1)
+for (const type of ['schedule-view', 'schedule-run']) {
+  const before = calls.length
+  assert.deepEqual(await query({ type, sessionId: 's2', id: 't1', requestId: 'outside-scope' }), {
+    kind: type, sessionId: 's2', id: 't1', requestId: 'outside-scope', code: 'schedule_out_of_scope',
+  })
+  assert.deepEqual(await query({ type, sessionId: 's2', id: 'missing', requestId: 'missing-task' }), {
+    kind: type, sessionId: 's2', id: 'missing', requestId: 'missing-task', code: 'schedule_not_found',
+  })
+  assert.deepEqual(calls.slice(before).map(call => call.method), ['view', 'view'])
+}
+assert.equal((await query({ type: 'schedule-view', sessionId: 's1', id: 't1' })).title, task.title)
+assert.equal((await query({ type: 'schedule-view', id: 'missing' })).code, 'schedule_not_found')
 assert.equal((await query({ type: 'schedule-delete', id: 't1', expectedUpdatedAt: task.updatedAt })).deleted, true)
 assert.equal((await query({ type: 'schedule-run', id: 't1' })).code, 'schedule_execution_pending')
 assert.equal((await query({ type: 'schedule-history', id: 't1', limit: 20 })).records.length, 0)

@@ -25,7 +25,7 @@ test('固定内部路由沿用 owner Peer，保留错误并屏蔽配对 URI', as
   assert.deepEqual(await api.call('hello', { api: [1] }), hello)
   assert.deepEqual(await api.call('state'), { revision: 3, bots: [] })
   await assert.rejects(api.call('answer-question', { sessionId: 's' }), { code: 'bot/stale' })
-  for (const endpoint of ['phone-pair', 'secret-set', '../other', 'delete-bot', 'constructor']) {
+  for (const endpoint of ['phone-pair', 'secret-set', '../other', 'delete-room', 'constructor']) {
     await assert.rejects(api.call(endpoint), { code: 'bad-request' })
   }
   assert.equal(calls.length, 3)
@@ -33,6 +33,41 @@ test('固定内部路由沿用 owner Peer，保留错误并屏蔽配对 URI', as
   await peer.dispose()
   await assert.rejects(api.call('state'))
   assert.equal(calls.length, 3)
+})
+
+test('Bot 删除只转发可写团队中的普通成员，并校验请求字段', async () => {
+  const peer = createTestPeer()
+  const calls = []
+  let readOnly = null
+  try {
+    const api = createBotAdapter({ async fetch(request) {
+      const body = await request.json()
+      calls.push(body)
+      if (body.endpoint === 'hello') return Response.json({ ok: true, value: { ...hello, capabilities: ['write-state'] } })
+      if (body.endpoint === 'state') return Response.json({ ok: true, value: {
+        mainBotId: 'chief', mainBotIds: ['chief', 'deputy'], readOnly,
+        bots: ['chief', 'deputy', 'worker'].map(id => ({ id })), rooms: [{ id: 'group' }],
+      } })
+      return Response.json({ ok: true, value: { bots: [], phone: { pairing: 'internal' } } })
+    } }, peer)
+    assert.ok((await api.call('hello')).capabilities.includes('bot-deletion'))
+    for (const id of ['chief', 'deputy']) {
+      await assert.rejects(api.call('delete-bot', { id }), { code: 'bot/main-protected' })
+    }
+    for (const id of ['group', 'missing']) {
+      await assert.rejects(api.call('delete-bot', { id }), { code: 'bot/stale' })
+    }
+    await assert.rejects(api.call('delete-bot', { id: '' }), { code: 'bad-request' })
+    await assert.rejects(api.call('delete-bot', { id: 'worker', force: true }), { code: 'bad-request' })
+    readOnly = 'another host owns the team'
+    await assert.rejects(api.call('delete-bot', { id: 'worker' }), { code: 'bot/read-only' })
+    assert.equal(calls.filter(call => call.endpoint === 'delete-bot').length, 0)
+    readOnly = null
+    assert.deepEqual(await api.call('delete-bot', { id: 'worker' }), { id: 'worker' })
+    assert.deepEqual(calls.at(-1), { endpoint: 'delete-bot', payload: { id: 'worker' } })
+  } finally {
+    await peer.dispose()
+  }
 })
 
 test('插件缺失、API 不兼容、非 JSON、响应过大分别报错', async () => {

@@ -163,7 +163,11 @@ App 在发送期间保留原草稿、引用与附件，收到匹配的 `sent` �
 
 `patch` 至少包含一个字段，支持 `title/prompt/timing/target/active`。更新成功直接返回完整任务。删除成功返回 `id/deleted:true`。各请求示例中的 revision 必须替换为每次实际读取的最新值。
 
-返回 `code:schedule_conflict` 时保留草稿，刷新当前任务，让用户复核差异后再次提交。`schedule_not_found` 时刷新目录并提示任务已移除。`schedule-run` 返回 `schedule_execution_pending` 表示已有一次执行正在准入，应刷新状态。一次立即执行的接受结果与 Agent 完成回复分别展示。
+- `schedule_conflict` 表示任务版本冲突。保留草稿，刷新当前任务，让用户复核差异后再次提交。
+- `schedule_not_found` 表示任务不存在。刷新目录并提示「任务不存在，可能已被删除」。
+- `schedule_out_of_scope` 表示任务存在，但请求带的 `sessionId` 与目标会话及相关会话均不匹配。提示「该任务属于其他会话，请从对应会话进入」。
+
+`schedule-run` 返回 `schedule_execution_pending` 表示已有一次执行正在准入，应刷新状态。一次立即执行的接受结果与 Agent 完成回复分别展示。
 
 清理入口应先向用户确认，再发送 `schedule-delete-inactive` 的 `confirm:true`。Host 清理已结束任务，并保留仍活动或暂停的任务。
 

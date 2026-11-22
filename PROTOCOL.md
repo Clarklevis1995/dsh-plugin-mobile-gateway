@@ -1320,6 +1320,8 @@ DSH Web 的“深度求索中，用时 22 秒 ···”是客户端文案，不�
 
 旧 `schedule-list(sessionId)` 继续返回该会话关联的活动任务，与宿主级分页参数互斥。旧 `schedule-update(sessionId?, id, expected, title?, prompt?, change?)` 转换为带 CAS 的编辑，`expected` 无 revision 时比对当前记录。旧 `schedule-delete(sessionId?, id, expectedUpdatedAt?)` 转换为删除。旧帧的 `sessionId` 若存在则继续限定任务关联范围。
 
+`schedule_not_found` 表示任务不存在。`schedule_out_of_scope` 表示任务存在，但请求携带的 `sessionId` 既非目标会话，也不在 `involvedSessionIds` 中。
+
 Host `schedule/changed` 转为无载荷 `schedule-changed`。重连、通知或写操作结束后刷新目录与详情。完整目标、规则、冲突、旧客户端转换和示例见 [移动端适配说明](docs/dsh-0.2.2-rc.1-mobile-integration.md)。
 
 ## 18. 插件管理（DSH 0.2.0-rc.2）
