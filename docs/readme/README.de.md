@@ -10,7 +10,7 @@
 
 > Current compatibility baseline: **DSH 0.2.2-rc.5**. [RC.5 audit / App checks](../dsh-0.2.2-rc.5-compatibility-audit.md) (中文).
 
-> **v0.12.3 · Veröffentlichung in Vorbereitung** — Unterstützt DSH 0.2.2-rc.5 und Node.js 24.9+. Bewahrt Ablehnungscodes und Begründungen des Modells und korrigiert fehlende Token-Nutzungsdaten fehlgeschlagener Anfragen im kompakten Verlauf. [Changelog](../../CHANGELOG.md) · [RC.5 / App](../dsh-0.2.2-rc.5-compatibility-audit.md)
+> **v0.12.4 · Veröffentlichung in Vorbereitung** — Neuer Schalter entfernt Smartphone-Konnektor-Anweisungen und phone_*-Tools aus künftigen Modellanfragen. Die Einstellung wird pro Gateway gespeichert; Chat, Kopplung und Dateiübertragung bleiben verfügbar. Unterstützt DSH 0.2.2-rc.5 und Node.js 24.9+. [Changelog](../../CHANGELOG.md) · [Phone connectors](../phone-connectors.md#模型上下文开关)
 
 Mobiles Drittanbieter-Gateway für DeepSeek Harness mit Geräteauthentifizierung. Sitzungen und Live-Ereignisse, Warteschlangen mit Bearbeiten/Löschen/Steer, bidirektionales Archivieren/Umbenennen, Generierung stoppen/fortsetzen, Aufgaben und aktuelles Goal, servergesteuerte Befehls-/Skill-Menüs, menschliche Freigaben sowie Bild-/Dateiübertragung. Nach Installation bietet Mobilgeräte in WebUI Gateway-Schalter, Kopplungs-QR und vertrauenswürdige Geräte.
 

@@ -10,7 +10,7 @@
 
 > Current compatibility baseline: **DSH 0.2.2-rc.5**. [RC.5 audit / App checks](../dsh-0.2.2-rc.5-compatibility-audit.md) (中文).
 
-> **v0.12.3 · publication en préparation** — Compatible avec DSH 0.2.2-rc.5 et Node.js 24.9+. Conserve les codes et motifs de refus du modèle et corrige la perte du nombre de tokens des tentatives échouées dans l’historique compact. [Changelog](../../CHANGELOG.md) · [RC.5 / App](../dsh-0.2.2-rc.5-compatibility-audit.md)
+> **v0.12.4 · publication en préparation** — Ajoute un interrupteur pour exclure les instructions des connecteurs téléphoniques et les outils phone_* des prochaines requêtes au modèle. Le réglage est enregistré par passerelle ; le chat, l’appairage et les transferts de fichiers restent disponibles. Compatible avec DSH 0.2.2-rc.5 et Node.js 24.9+. [Changelog](../../CHANGELOG.md) · [Phone connectors](../phone-connectors.md#模型上下文开关)
 
 Passerelle mobile tierce pour DeepSeek Harness avec authentification des appareils. Sessions et événements en direct, messages en attente avec édition/suppression/Steer, archivage et renommage bidirectionnels, arrêt/reprise de génération, tâches et Goal courant, menus de commandes et compétences fournis par le serveur, intervention humaine, images et fichiers. L’installation ajoute Appareils mobiles dans WebUI pour activer la passerelle, générer les QR et gérer les appareils approuvés.
 

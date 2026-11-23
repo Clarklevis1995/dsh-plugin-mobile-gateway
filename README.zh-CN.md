@@ -10,7 +10,7 @@
 
 > RC.5 的变更范围、搜索迁移与 App 验收见 [RC.5 兼容性评估](docs/dsh-0.2.2-rc.5-compatibility-audit.md)。
 
-> **v0.12.3 · 待发布** — 适配 DSH 0.2.2-rc.5，保留模型拒答的错误码与原因，修复失败请求在精简历史中丢失 token 用量的问题。需要 Node.js 24.9+。详见 [版本记录](CHANGELOG.md) 与 [RC.5 兼容性评估](docs/dsh-0.2.2-rc.5-compatibility-audit.md)。
+> **v0.12.4 · 待发布** — 通用设置新增「向模型提供手机连接器」开关，可关闭连接器说明和 phone_* 工具定义，减少后续模型请求的上下文占用；聊天、配对和文件传输保持可用，设置按网关持久保存。适配 DSH 0.2.2-rc.5，需要 Node.js 24.9+。详见 [版本记录](CHANGELOG.md) 与 [连接器说明](docs/phone-connectors.md#模型上下文开关)。
 
 > 当前源码增加实验性 **P2P 优先** 传输：开启 `webrtc.enabled` 后，支持该能力的新客户端通过现有鉴权 WebSocket 协商双 WebRTC DataChannel，准备失败整组回退 WebSocket。首次使用默认“局域网直连”，通过同一 Wi-Fi 下的主机地址使用 WebSocket；可在“连接与配对 → 连接方案”主动选择“公网入口 + 优先 P2P（实验）”或其他方案，已保存的选择会保留；旧客户端保持原行为。**网关可联调，Android/iOS App 待接入，尚未发布**。详见 [App 接入契约](docs/webrtc-app-integration.md)、[运行库决策](docs/webrtc-runtime-decision.md) 和 [验收记录](docs/webrtc-acceptance.md)。
 

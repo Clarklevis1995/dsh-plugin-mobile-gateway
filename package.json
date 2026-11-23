@@ -1,7 +1,7 @@
 {
   "name": "dsh-plugin-mobile-gateway",
-  "version": "0.12.3",
-  "description": "Whaleness 移动网关，连接 DeepSeek Harness 与移动设备，支持安全配对、实时会话同步、智能体团队与子会话、插件管理、官方语音输入及文件传输，提供局域网、Tailscale 和 Cloudflare Tunnel 连接。0.12.3 适配 DSH 0.2.2-rc.5，保留模型拒答错误码与原因，修复失败请求在精简历史中丢失 token 用量的问题；需要 Node.js 24.9 或更高版本。",
+  "version": "0.12.4",
+  "description": "Whaleness 移动网关，连接 DeepSeek Harness 与移动设备，支持安全配对、实时会话同步、智能体团队与子会话、插件管理、官方语音输入及文件传输，提供局域网、Tailscale 和 Cloudflare Tunnel 连接。0.12.4 新增手机连接器模型上下文开关，可停止向后续模型请求注入连接器说明和 phone_* 工具定义，减少上下文占用；聊天、配对和文件传输保持可用，设置按网关持久保存；适配 DSH 0.2.2-rc.5，需要 Node.js 24.9 或更高版本。",
   "main": "lib/index.mjs",
   "files": [
     "CHANGELOG.md",

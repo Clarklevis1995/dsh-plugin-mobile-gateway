@@ -10,7 +10,7 @@
 
 > Current compatibility baseline: **DSH 0.2.2-rc.5**. [RC.5 audit / App checks](../dsh-0.2.2-rc.5-compatibility-audit.md) (中文).
 
-> **v0.12.3 · 출시 준비 중** — DSH 0.2.2-rc.5 및 Node.js 24.9+를 지원합니다. 모델의 응답 거부 코드와 이유를 보존하고, 축약된 기록에서 실패한 요청의 토큰 사용량이 누락되는 문제를 수정했습니다. [Changelog](../../CHANGELOG.md) · [RC.5 / App](../dsh-0.2.2-rc.5-compatibility-audit.md)
+> **v0.12.4 · 출시 준비 중** — 이후 모델 요청에서 휴대폰 연결기 설명과 phone_* 도구를 제외하는 스위치를 추가했습니다. 게이트웨이별로 저장되며 채팅, 페어링, 파일 전송은 유지됩니다. DSH 0.2.2-rc.5 및 Node.js 24.9+를 지원합니다. [Changelog](../../CHANGELOG.md) · [Phone connectors](../phone-connectors.md#模型上下文开关)
 
 기기 인증을 지원하는 DeepSeek Harness 서드파티 모바일 게이트웨이입니다. 세션·실시간 이벤트, 대기 메시지 동기화·편집·삭제·Steer, 세션 양방향 보관·이름 변경, 생성 중지·재개, 작업과 현재 Goal, 서버 기반 명령·스킬 메뉴, 사용자 질문·승인, 이미지·파일 전송을 지원합니다. 설치하면 WebUI 사이드바에 모바일 기기가 추가되어 게이트웨이 활성화, QR 생성, 신뢰 기기 관리를 할 수 있습니다.
 

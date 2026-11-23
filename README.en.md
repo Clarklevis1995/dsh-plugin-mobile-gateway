@@ -10,7 +10,7 @@
 
 > See the [RC.5 compatibility audit](docs/dsh-0.2.2-rc.5-compatibility-audit.md) (Chinese) for search migration and mobile acceptance checks.
 
-> **v0.12.3 · pending release** — Targets DSH 0.2.2-rc.5. Preserves model refusal codes and explanations, and fixes missing token usage for failed attempts in compact history. Requires Node.js 24.9+. See the [changelog](CHANGELOG.md) and [RC.5 compatibility audit](docs/dsh-0.2.2-rc.5-compatibility-audit.md) (Chinese).
+> **v0.12.4 · pending release** — Adds a persistent per-gateway switch to omit phone connector instructions and phone_* tools from future model requests, reducing context usage while keeping chat, pairing and file transfers available. Targets DSH 0.2.2-rc.5 and Node.js 24.9+. See the [changelog](CHANGELOG.md) and [connector guide](docs/phone-connectors.md#模型上下文开关) (Chinese).
 
 A third-party mobile gateway for DeepSeek Harness with device authentication. Supports sessions and live events; queued-message synchronization, editing, deletion, and Steer; bidirectional session archiving and renaming; stopping and resuming generation; task lists and the current Goal; server-driven command and skill menus; human-in-the-loop workflows; and image and file transfers. After installation, a Mobile Devices entry appears in the Harness WebUI sidebar for enabling the gateway, generating pairing QR codes, and managing trusted devices.
 

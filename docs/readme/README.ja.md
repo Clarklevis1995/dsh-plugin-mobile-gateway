@@ -10,7 +10,7 @@
 
 > Current compatibility baseline: **DSH 0.2.2-rc.5**. [RC.5 audit / App checks](../dsh-0.2.2-rc.5-compatibility-audit.md) (中文).
 
-> **v0.12.3 · 公開準備中** — DSH 0.2.2-rc.5、Node.js 24.9+ に対応。モデルの拒否コードと理由を保持し、圧縮履歴で失敗したリクエストのトークン使用量が失われる問題を修正しました。 [Changelog](../../CHANGELOG.md) · [RC.5 / App](../dsh-0.2.2-rc.5-compatibility-audit.md)
+> **v0.12.4 · 公開準備中** — 接続機能の説明と phone_* ツールを以降のモデル要求から除外するスイッチを追加しました。ゲートウェイごとに保存され、チャット、ペアリング、ファイル転送は維持されます。DSH 0.2.2-rc.5、Node.js 24.9+ に対応。 [Changelog](../../CHANGELOG.md) · [Phone connectors](../phone-connectors.md#模型上下文开关)
 
 DeepSeek Harness 向けの端末認証付きサードパーティー製モバイルゲートウェイです。セッションとリアルタイムイベント、待機メッセージの同期・編集・削除・Steer、セッションの双方向アーカイブ・名前変更、生成の停止・再開、タスクと現在の Goal、サーバー提供のコマンド・スキルメニュー、ユーザーへの質問と承認、画像・ファイル転送に対応します。インストールすると WebUI に「モバイル端末」が追加され、起動、QR 生成、信頼済み端末の管理ができます。
 

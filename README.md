@@ -10,7 +10,7 @@
 
 > See the [RC.5 compatibility audit](docs/dsh-0.2.2-rc.5-compatibility-audit.md) (Chinese) for search migration and mobile acceptance checks.
 
-> **v0.12.3 · pending release** — Targets DSH 0.2.2-rc.5. Preserves model refusal codes and explanations, and fixes missing token usage for failed attempts in compact history. Requires Node.js 24.9+. See the [changelog](CHANGELOG.md) and [RC.5 compatibility audit](docs/dsh-0.2.2-rc.5-compatibility-audit.md) (Chinese).
+> **v0.12.4 · pending release** — Adds a persistent per-gateway switch to omit phone connector instructions and phone_* tools from future model requests, reducing context usage while keeping chat, pairing and file transfers available. Targets DSH 0.2.2-rc.5 and Node.js 24.9+. See the [changelog](CHANGELOG.md) and [connector guide](docs/phone-connectors.md#模型上下文开关) (Chinese).
 
 > Current source adds experimental **P2P-first** transport. With `webrtc.enabled: true`, compatible clients negotiate two WebRTC DataChannels over the existing authenticated WebSocket and fall back as a group to WebSocket. First use defaults to LAN direct over WebSocket on the same Wi-Fi. Opt into a P2P or other connection plan under Connection & Pairing; saved choices are preserved. Existing clients are unchanged. **Gateway ready for integration; Android/iOS integration and device acceptance are pending. Not released.** See the [client contract](docs/webrtc-app-integration.md), [runtime decision](docs/webrtc-runtime-decision.md), and [acceptance record](docs/webrtc-acceptance.md).
 
