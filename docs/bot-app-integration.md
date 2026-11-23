@@ -100,3 +100,11 @@ node scripts/bot-image-live-probe.mjs
 - `state {avatars:"ref"}` 保留官方自定义头像引用，为内置角色外形生成 SVG 内容引用。`avatar` 按相同引用返回图像，APP 按主机保存到本地。
 - `role-settings` 增加 `update-bot`、`duplicate-bot`、`set-main`，沿用官方设置、模型、记忆和定时任务接口。模型目录来自团队状态，推理档位由 `efforts` 查询。
 - `bot-attachments` 增加 `send-attachments`。APP 使用普通会话的文件分块上传和图片预处理，发送 `{chatId,sessionId,text,images,receipts}`。网关核对当前 Bot 会话和写入权限，复用官方会话提交接口。普通文件继续遵守 `fileUploadsEnabled` 和会话凭证校验。
+
+### App 主页新建会话 / 群聊（2026-11-23）
+
+网关在上游支持 `write-state` 时增加 `bot-conversations` 能力，开放 `create-room` 和受限 `set-flags`。建群仅接收 `{ members, admin, greet? }`：成员去重、至少两位、全部属于当前可写团队，`admin` 必须等于第一位；群名和应答模式不由移动端指定，继续使用 DS-Bot 默认规则。响应仅保留 ID、名称、成员及 Session ID。
+
+`set-flags` 仅允许 `{ id, hidden: false }` 恢复现有 Bot，拒绝隐藏、置顶和分区字段，拒绝群 ID 与不存在的 Bot。两项操作都先读取团队并检查只读状态。App 只有收到新能力时才开放相应写入，旧网关不会被 App 尝试调用新路由。
+
+契约测试见 `test/bot-bridge.test.mjs`。另在临时目录中使用官方 DS-Bot 0.3.6 运行时及其测试上下文验证了真实路由的默认群名/模式、首位管理员、`greet`、隐藏 Bot 恢复及首条消息提交；Session 服务为内存测试实现，不代表真实模型回复或用户主机部署验收。此项功能尚未发布，需安装包含改动的网关源码版本。

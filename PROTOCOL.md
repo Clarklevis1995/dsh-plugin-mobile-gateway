@@ -667,6 +667,7 @@ let image = [
 |---|---|---|
 | `sessions` | — | 会话列表（`updatedAt/running/blank/cwd/agentPreset`） |
 | `session-archive` | `sessionId` | 将 Session 加入 Host 的完整归档集合（隐藏但不删除） |
+| `session-pin` | `sessionId`, `pinned`（布尔值）, `requestId`（可选） | 通过 Host 与 WebUI 共用的接口设置会话置顶状态 |
 | `session-rename` | `sessionId`, `title` | 写入用户指定的持久化 Session 名称 |
 | `history` | `sessionId`, `beforeSeq?`, `historyFormatVersion?`, `maxMessages?`, `maxBytes?`, `view?` | 历史事件页（见下） |
 | `attachment` | `sessionId`, `attachmentId` | 读取历史中属于该会话的图片字节 |
@@ -730,6 +731,7 @@ WebUI、App 或其他客户端造成的变化通过以下帧主动推送：
 ```
 
 - `session-archives` 在网关取得 opening baseline 后缓存；新设备连接时会收到当前完整集合，之后每次 WebUI 归档都会收到新的完整集合。
+- 网关声明 `session-pin-v1` 后，支持置顶的 Host 会通过 `session-pins` 发送 `pinnedSessionIds`，包括初始集合和随后的变化，最近置顶的会话排在前面。移动端按工作区筛选后使用这个顺序。置顶请求成功返回 `session-pin-set`，携带 `sessionId` 和原请求的 `requestId`（如有）。列表只消费 `session-pins`，并会收到 WebUI 触发的置顶、取消置顶和归档变化。
 - `session-title-changed` 是 Session 列表级元数据通知，即使客户端正在 `subscribe` 另一个 Session 也会收到。
 - 同一名称变化仍会作为带序号的普通 `event` 帧发给订阅该 Session 的客户端；客户端可按 `seq` 幂等处理。
 

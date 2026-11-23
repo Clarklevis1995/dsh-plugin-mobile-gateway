@@ -305,3 +305,43 @@ test('Bot creation limits upstream fields and reuses the fixed local Agent avata
   assert.equal(forwarded.length, requestCount)
   await peer.dispose()
 })
+
+
+test('新建会话沿用 Web 默认群聊规则，管理员必须为第一位，隐藏 Bot 可以恢复', async () => {
+  const peer = createTestPeer()
+  const calls = []
+  let readOnly = false
+  const api = createBotAdapter({ async fetch(request) {
+    const body = await request.json()
+    calls.push(body)
+    if (body.endpoint === 'hello') return Response.json({ ok: true, value: { ...hello, capabilities: ['write-state'] } })
+    if (body.endpoint === 'state') return Response.json({ ok: true, value: {
+      readOnly, bots: [{ id: 'chief' }, { id: 'hidden', hidden: true }], rooms: [{ id: 'room' }],
+    } })
+    if (body.endpoint === 'create-room') return Response.json({ ok: true, value: {
+      id: 'new', name: '主机默认群名', members: body.payload.members, sessionId: 'session-new', secret: 'never forward',
+    } })
+    return Response.json({ ok: true, value: true })
+  } }, peer)
+  try {
+    assert.ok((await api.call('hello')).capabilities.includes('bot-conversations'))
+    const payload = { members: ['hidden', 'chief'], admin: 'hidden', greet: true }
+    assert.deepEqual(await api.call('create-room', payload), {
+      id: 'new', name: '主机默认群名', members: ['hidden', 'chief'], sessionId: 'session-new',
+    })
+    assert.deepEqual(calls.at(-1), { endpoint: 'create-room', payload })
+    assert.deepEqual(await api.call('set-flags', { id: 'hidden', hidden: false }), { id: 'hidden' })
+    for (const bad of [
+      { members: ['chief'], admin: 'chief' }, { members: ['chief', 'chief'], admin: 'chief' },
+      { ...payload, admin: 'chief' }, { ...payload, mode: 'all' }, { ...payload, greet: 'yes' },
+    ]) await assert.rejects(api.call('create-room', bad), { code: 'bad-request' })
+    await assert.rejects(api.call('create-room', { members: ['chief', 'room'], admin: 'chief' }), { code: 'bot/stale' })
+    await assert.rejects(api.call('set-flags', { id: 'hidden', hidden: true }), { code: 'bad-request' })
+    await assert.rejects(api.call('set-flags', { id: 'hidden', hidden: false, pinned: true }), { code: 'bad-request' })
+    readOnly = true
+    const before = calls.filter(call => ['create-room', 'set-flags'].includes(call.endpoint)).length
+    await assert.rejects(api.call('create-room', payload), { code: 'bot/read-only' })
+    await assert.rejects(api.call('set-flags', { id: 'hidden', hidden: false }), { code: 'bot/read-only' })
+    assert.equal(calls.filter(call => ['create-room', 'set-flags'].includes(call.endpoint)).length, before)
+  } finally { await peer.dispose() }
+})

@@ -332,6 +332,7 @@ const invokeCalls = []
 const controlFrames = []
 const initialTurnOutline = [{ turn: 1, seq: 1, prompt: '调整输入框阴影', response: '已减轻阴影。' }]
 const workspaceFrames = []
+let hostPins = ['web-initial']
 const liveFollows = new Map()
 const savedSelections = []
 ctx.agentDefaultModel = {
@@ -401,6 +402,18 @@ ctx.typertGateway = {
     }
     if (req.namespace === 'workspace' && req.method === 'create') return unwrap(api.workspace.create)
     if (req.namespace === 'workspace' && req.method === 'archiveSession') return unwrap(api.workspace.archiveSession)
+    if (req.namespace === 'workspace' && ['pinSession', 'unpinSession'].includes(req.method)) {
+      const { sessionId } = request
+      if (sessionId === 'missing') throw Object.assign(new Error('Unknown session'), { code: 'session/not-found' })
+      const next = req.method === 'pinSession'
+        ? (hostPins.includes(sessionId) ? hostPins : [sessionId, ...hostPins])
+        : hostPins.filter(id => id !== sessionId)
+      if (next.length !== hostPins.length) {
+        hostPins = next
+        workspaceFrames.push({ type: 'pinned', pinnedSessionIds: hostPins })
+      }
+      return { pinnedSessionIds: [...hostPins] }
+    }
     if (req.namespace === 'settings' && req.method === 'describe') return unwrap(api.settings.describe, {})
     if (req.namespace === 'settings' && req.method === 'update') {
       return unwrap(api.settings.update, { ns: req.args.ns, patch: req.args.patch })
@@ -436,7 +449,7 @@ ctx.typertGateway = {
     if (req.namespace === 'workspace' && req.method === 'follow') {
       const value = (await api.workspace.list()).result.value
       return (async function* () {
-        yield { type: 'baseline', value }
+        yield { type: 'baseline', value: { ...value, pinnedSessionIds: hostPins } }
         while (!req.signal.aborted) {
           if (workspaceFrames.length > 0) yield workspaceFrames.shift()
           else await new Promise((resolve) => setTimeout(resolve, 5))
@@ -785,6 +798,39 @@ function waitFor(pred, timeout) { return new Promise((res) => { const t0 = Date.
       assert.equal(await waitFor(() => controls.some(f => f.kind === 'session-title-changed') && conversations.some(f => f.seq === 7001), 2000), true)
       assert.equal(controls.some(f => f.seq === 7001 && f.event), false)
       assert.equal(conversations.some(f => f.kind === 'session-title-changed' || f.kind === 'session-archives'), false)
+      assert.ok(controls.find(f => f.kind === 'hello').capabilities.includes('session-pin-v1'))
+      assert.deepEqual(controls.find(f => f.kind === 'session-pins').pinnedSessionIds, ['web-initial'])
+      control.send(JSON.stringify({ type: 'session-pin', sessionId: 's1', pinned: true, requestId: 'pin-s1' }))
+      assert.equal(await waitFor(() => controls.some(f => f.requestId === 'pin-s1')
+        && got.some(f => f.kind === 'session-pins' && f.pinnedSessionIds[0] === 's1'), 2000), true)
+      assert.deepEqual(controls.find(f => f.requestId === 'pin-s1'),
+        { kind: 'session-pin-set', sessionId: 's1', requestId: 'pin-s1' })
+      assert.deepEqual(hostPins, ['s1', 'web-initial'])
+      const follower = new WebSocket(`ws://127.0.0.1:${webServer.port}/ws/mobile`, { headers: { 'X-DSH-Channel': 'control' } })
+      const followerFrames = []
+      follower.on('message', data => followerFrames.push(JSON.parse(data.toString())))
+      try {
+        assert.equal(await waitFor(() => followerFrames.some(f => f.kind === 'session-pins'), 2000), true)
+        assert.deepEqual(followerFrames.find(f => f.kind === 'session-pins').pinnedSessionIds, hostPins)
+        control.send(JSON.stringify({ type: 'session-pin', sessionId: 's1', pinned: false, requestId: 'unpin-s1' }))
+        assert.equal(await waitFor(() => controls.some(f => f.requestId === 'unpin-s1')
+          && followerFrames.some(f => f.kind === 'session-pins' && f.pinnedSessionIds.length === 1), 2000), true)
+        assert.equal(controls.find(f => f.requestId === 'unpin-s1').kind, 'session-pin-set')
+        assert.deepEqual(hostPins, ['web-initial'])
+        // 模拟 WebUI 经同一个 Host Controller 置顶。
+        await ctx.typertGateway.invoke({ namespace: 'workspace', method: 'pinSession',
+          peer: ctx.connection.peers[0], args: { request: { sessionId: 'web-next' } } })
+        assert.equal(await waitFor(() => followerFrames.some(f => f.kind === 'session-pins'
+          && f.pinnedSessionIds[0] === 'web-next'), 2000), true)
+        assert.equal(conversations.some(f => f.kind === 'session-pins'), false)
+      } finally { follower.terminate() }
+      control.send(JSON.stringify({ type: 'session-pin', sessionId: 'missing', pinned: true, requestId: 'missing-pin' }))
+      assert.equal(await waitFor(() => controls.some(f => f.requestId === 'missing-pin'), 2000), true)
+      assert.equal(controls.find(f => f.requestId === 'missing-pin').code, 'session/not-found')
+      control.send(JSON.stringify({ type: 'session-pin', sessionId: 's1', pinned: 'false', requestId: 'bad-pin' }))
+      assert.equal(await waitFor(() => controls.some(f => f.requestId === 'bad-pin'), 2000), true)
+      assert.equal(controls.find(f => f.requestId === 'bad-pin').code, 'bad-request')
+      interactionResults.push(['session pin commands use Host state and follow WebUI changes', true])
       conversation.pause()
       for (let seq = 7002; seq < 7258; seq++) {
         listeners['session/event']({ id: 's1' }, { type: 'assistant/message', seq, time: Date.now(), data: { message: { content: [{ type: 'text', text: 'x'.repeat(4096) }] }, turn: 1, step: 1 } })
