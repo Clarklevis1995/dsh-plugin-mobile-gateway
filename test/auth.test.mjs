@@ -13,6 +13,7 @@ const WebSocket = require('ws')
 const crypto = require('node:crypto')
 const plugin = (await import('../lib/index.mjs')).default
 const { createRegistry } = require('../lib/devices.js')
+const { LOG_FILE } = await import('../lib/logging.mjs')
 
 function waitForMessage(ws, kind) {
   return new Promise((resolve, reject) => {
@@ -300,6 +301,7 @@ function expectRejected(url, options = {}) {
     400,
   )
 
+  const logStart = fs.existsSync(LOG_FILE) ? fs.readFileSync(LOG_FILE, 'utf8').length : 0
   const pairedSocket = new WebSocket(
     wsUrl,
     ['dsh-mobile-v1', `dsh-pair.${pairBody.payload.pairingCode}`],
@@ -347,11 +349,15 @@ function expectRejected(url, options = {}) {
     'file-references-v1',
   ])
   const speechCatalog = waitForMessage(pairedSocket, 'speech-catalog')
+  pairedSocket.send(JSON.stringify({ type: 'ping', requestId: 'keepalive' }))
   pairedSocket.send(JSON.stringify({ type: 'speech-catalog', requestId: 'speech-info' }))
   assert.equal((await speechCatalog).available, true)
   const speechTranscript = waitForMessage(pairedSocket, 'speech-transcript')
   pairedSocket.send(JSON.stringify({ type: 'speech-transcribe', requestId: 'speech-record', audioBase64: 'AA==' }))
   assert.equal((await speechTranscript).text, '测试语音')
+  // A paired device's requests are logged as activity at most once per 30 s; keepalive pings are not activity.
+  assert.deepEqual(fs.readFileSync(LOG_FILE, 'utf8').slice(logStart).match(/device active .*/g),
+    ['device active (type=speech-catalog) device=未命名设备'])
   const connectedStatus = await (await fetch(`${base}/mgw/status`)).json()
   assert.equal(connectedStatus.gatewayEnabled, true)
   assert.equal(connectedStatus.waitExpiresAt, null)
